@@ -1,0 +1,1016 @@
+# LDT Decision Engine v2 — Codex Build Guide
+
+LDT Decision Engine v2 is a **backend-first decision-support service** that rebuilds the old Streamlit prototype into a clean, modular Python backend.
+
+This document is the master implementation guide for Codex. It defines the architectural constraints, implementation priorities, delivery sequence, and review checks for rebuilding the system.
+
+---
+
+## Mission
+
+Build a clean Python backend repository called `ldt-de-v2` that replaces the old `wb-ldt-de` Streamlit prototype.
+
+The new system must:
+
+- expose clean API endpoints
+- remain frontend-agnostic
+- use typed schemas between internal steps
+- preserve provenance and auditability
+- separate deterministic logic from LLM-based generation
+- use explicit workflow state and routing
+- support optional policy-driven web enrichment
+- validate outputs before returning them
+
+Do **not** build UI code.
+
+---
+
+## Core architectural constraints
+
+### Required architecture
+
+1. Use **FastAPI** for the API layer.
+2. Structure the application as a **modular multi-file backend**, not a notebook or monolithic script.
+3. Design orchestration as a **custom workflow / graph-based process** with explicit state, nodes, and routing.
+4. Treat the following as separate concerns:
+   - deterministic analytics
+   - retrieval
+   - recommendation generation
+   - project ranking
+   - explanation generation
+   - validation
+5. Every internal step consumed downstream must use **typed schemas**.
+6. Prefer **schema-first**, machine-readable contracts over free-form text.
+7. Preserve **provenance and auditability** for evidence and recommendations.
+8. Web search / external research must be **optional and policy-driven**, not always on.
+9. The system must be **frontend-agnostic**.
+10. Do **not** write UI code.
+
+### Implementation style
+
+- prefer clean architecture and explicit boundaries
+- use small focused modules
+- keep side effects isolated
+- write concise docstrings
+- add tests for non-trivial deterministic logic
+- do not over-engineer authentication or infrastructure in the first pass
+- keep the first version production-shaped but minimal
+
+### When unsure
+
+Choose:
+
+- **explicit workflow state** over implicit chaining
+- **structured outputs** over parsing prose
+- **deterministic ranking** over purely generative ranking
+- **auditability** over convenience
+
+---
+
+## Operating rule for every task
+
+For every implementation task:
+
+1. First state what files will be created or modified.
+2. Then implement them.
+3. Then summarize:
+   - what is complete
+   - what remains
+   - any assumptions
+
+---
+
+# Build plan
+
+## Prompt 1 — Initialize the clean repository skeleton
+
+### Goal
+Create the initial repository skeleton for a backend-first Python service called `ldt-de-v2`.
+
+### Requirements
+
+- create a clean modular backend layout
+- include top-level folders for:
+  - `apps`
+  - `src`
+  - `tests`
+  - `docs`
+  - `scripts`
+  - `infra`
+- create a FastAPI app entrypoint under `apps/api`
+- create a worker entrypoint under `apps/worker`
+- create placeholder packages under `src` for:
+  - `config`
+  - `core`
+  - `schemas`
+  - `storage`
+  - `ingestion`
+  - `retrieval`
+  - `analytics`
+  - `ranking`
+  - `prompts`
+  - `llm`
+  - `workflows`
+  - `services`
+  - `validation`
+  - `observability`
+  - `evaluation`
+- add minimal package init files as needed
+- add a top-level `README`
+- add a `.env.example`
+- add a `.gitignore`
+- add a simple `pyproject.toml` or equivalent
+- do not add Streamlit
+- do not add database-specific code yet
+- do not add authentication yet
+
+### Output expectations
+
+- create only the repository skeleton and minimal boot files
+- do not implement workflow logic yet
+- keep the codebase import-clean and runnable
+
+### After implementation
+
+- show the directory tree
+- explain the purpose of each top-level package
+- state what should be built next
+
+---
+
+## Prompt 2 — Add backend foundation and app bootstrapping
+
+### Goal
+Build the backend foundation for the new repository.
+
+### Requirements
+
+- create a FastAPI application factory or equivalent clean app bootstrap
+- add health, version, and capabilities endpoints
+- add a centralized config/settings module
+- support environment-based config loading
+- add structured error response primitives
+- add a request id or trace id mechanism
+- add logging middleware
+- keep route handlers thin
+- do not add business logic yet
+- do not connect to external services yet
+
+### Files to create or modify
+
+- `apps/api` main entrypoint
+- `src/config` settings module
+- `src/core` app bootstrap module
+- `src/core` error handling module
+- `src/core` logging module
+- `src/schemas` common response schemas
+- basic router modules
+
+### Output expectations
+
+- backend should boot successfully
+- health endpoint should work
+- version endpoint should work
+- capabilities endpoint should return a placeholder contract
+
+### After implementation
+
+- summarize the runtime flow of a request
+- identify the next layer to build
+
+---
+
+## Prompt 3 — Create canonical domain schemas
+
+### Goal
+Create the core domain schemas for the backend.
+
+### Design goals
+
+- the system must be schema-first
+- any downstream workflow node should consume typed objects, not free-form text
+- keep schemas focused and composable
+
+### Create schemas for
+
+#### Request/response
+- `RecommendationRequest`
+- `RecommendationResponse`
+- `RunStatusResponse`
+- `ProjectReviewRequest`
+- `ProjectReviewResponse`
+
+#### Core domain
+- `MunicipalityProfile`
+- `IndicatorGap`
+- `EvidenceItem`
+- `EvidenceBundle`
+- `RecommendationCandidate`
+- `RankingBreakdown`
+- `ProjectCandidate`
+- `ProjectReview`
+- `CitationRecord`
+- `ValidationReport`
+- `WorkflowState`
+
+#### Internal workflow / LLM contracts
+- `RetrievalPlan`
+- `WebResearchOutput`
+- `RecommendationGenerationOutput`
+- `NarrativeExplanationOutput`
+- `AuditOutput`
+
+### Rules
+
+- include enough fields for provenance and confidence
+- include internal ids where appropriate
+- separate API-facing schemas from internal workflow schemas if useful
+- do not implement business logic yet
+- add comments/docstrings for important fields
+
+### After implementation
+
+- explain how these schemas relate to each other
+- identify schemas likely to evolve later
+
+---
+
+## Prompt 4 — Port deterministic analytics from the old app
+
+### Goal
+Port and cleanly separate the non-LLM logic that computes indicator comparisons, gap analysis, and priority signals.
+
+### Requirements
+
+- create storage-facing interfaces or placeholder repositories for:
+  - municipalities
+  - indicators
+  - projects
+- create analytics services for:
+  - municipality profile assembly
+  - indicator gap analysis
+  - priority signal computation
+- keep this layer completely independent of LLM calls
+- write unit tests for core analytics logic
+- do not add retrieval or workflow code yet
+- use mock or placeholder storage data if real loaders are not wired yet
+
+### Expected modules
+
+- `src/storage/municipalities.py`
+- `src/storage/indicators.py`
+- `src/storage/projects.py`
+- `src/analytics/gap_analysis.py`
+- `src/analytics/priority_signals.py`
+- `src/services/municipality_profile_service.py`
+
+### Output expectations
+
+- deterministic services should return typed schema objects
+- tests should cover at least the main analytics behavior
+- clearly mark assumptions that depend on the old repository’s data model
+
+### After implementation
+
+- explain how this layer stays isolated from the LLM layer
+- list what must be wired next
+
+---
+
+## Prompt 5 — Add run registry and async workflow shell
+
+### Goal
+Implement run management for long-running recommendation jobs.
+
+### Requirements
+
+- create a run registry service
+- define run state transitions:
+  - `pending`
+  - `queued`
+  - `running`
+  - `validating`
+  - `completed`
+  - `failed`
+  - `cancelled`
+- create endpoints for:
+  - submit recommendation run
+  - fetch run status
+  - fetch run result
+  - cancel run
+- persist run state in an initial simple backend-friendly way
+- keep persistence abstraction clean so storage can be replaced later
+- do not build the full recommendation workflow yet
+- return placeholder results where needed
+
+### Expected modules
+
+- `src/services/run_registry.py`
+- `src/schemas/run_state.py` if needed
+- API routers for runs
+- placeholder workflow launcher
+- tests for run lifecycle behavior
+
+### Output expectations
+
+- frontend should be able to submit and poll a run
+- run ids and statuses should be stable
+- cancellation semantics should be defined even if limited
+
+### After implementation
+
+- explain how future workflow nodes will plug into this run system
+
+---
+
+## Prompt 6 — Build the source registry and ingestion scaffolding
+
+### Goal
+Create the system that registers, normalizes, and prepares local document sources for retrieval and evidence extraction.
+
+### Requirements
+
+- define a source registry abstraction
+- create typed source metadata schemas
+- support source types such as:
+  - municipal development plan
+  - policy document
+  - project page
+  - project document
+  - reference/case-study document
+- implement a simple ingestion pipeline skeleton with stages for:
+  - register source
+  - normalize metadata
+  - parse content placeholder
+  - chunk content placeholder
+  - persist source and chunk records
+- do not implement sophisticated PDF parsing yet
+- keep parser/chunker pluggable
+- add admin-facing service methods or commands for reindexing
+
+### Expected modules
+
+- `src/ingestion/source_registry.py`
+- `src/ingestion/pipeline.py`
+- `src/ingestion/chunking.py`
+- `src/schemas/source_metadata.py`
+- storage abstractions for sources and chunks
+
+### Output expectations
+
+- clear ingestion API/service boundary
+- source can be registered and ingested end-to-end with placeholder parsing
+- chunks preserve basic source linkage
+
+### After implementation
+
+- describe how this ingestion layer will later support real retrieval
+
+---
+
+## Prompt 7 — Build the retrieval layer
+
+### Goal
+Support grounded retrieval over locally ingested sources.
+
+### Requirements
+
+- create retrieval interfaces for:
+  - semantic retrieval
+  - lexical retrieval
+  - hybrid retrieval
+- retrieval results must return typed objects with:
+  - source id
+  - chunk id
+  - score(s)
+  - source type
+  - optional municipality/category metadata
+  - citation-friendly fields
+- create a retrieval service that can route among retrieval modes
+- add filters for municipality, category, source type where possible
+- use a placeholder/simple backend if needed, but keep interfaces production-shaped
+- do not implement web search here
+- add tests for retrieval result shape and filtering logic
+
+### Expected modules
+
+- `src/retrieval/semantic.py`
+- `src/retrieval/lexical.py`
+- `src/retrieval/hybrid.py`
+- `src/retrieval/service.py`
+- API endpoints or internal services for evidence search
+
+### Output expectations
+
+- retrieval callable independently of recommendation workflow
+- retrieval results inspectable and schema-valid
+- hybrid interface explicit even if first implementation is simple
+
+### After implementation
+
+- explain how recommendation workflows will consume this retrieval layer
+
+---
+
+## Prompt 8 — Add web research service with policy controls
+
+### Goal
+Implement a web research service for optional external evidence enrichment.
+
+### Requirements
+
+- service must be policy-driven, not always on
+- define a decision contract for when web research is allowed
+- normalize web findings into the same `EvidenceItem`-style schema used elsewhere
+- attach:
+  - source URL or citation metadata
+  - freshness marker
+  - source type = `web`
+  - confidence or trust hints where applicable
+- keep web service separate from local retrieval
+- do not embed web logic inside route handlers
+- do not make recommendation generation depend on web search by default
+
+### Expected modules
+
+- `src/services/web_research.py`
+- schemas for web research outputs
+- optional policy helper module
+
+### Output expectations
+
+- web research callable independently
+- output compatible with the evidence bundle model
+- clear rule for when the workflow should or should not call it
+
+### After implementation
+
+- summarize the difference between local evidence and web evidence
+
+---
+
+## Prompt 9 — Build the unified evidence bundle layer
+
+### Goal
+Merge deterministic facts, local retrieval results, and optional web evidence into one canonical internal structure.
+
+### Requirements
+
+- create a service that accepts evidence from multiple origins:
+  - operational data / analytics
+  - local retrieval
+  - web research
+  - derived inference if needed
+- normalize them into a consistent `EvidenceItem` schema
+- build an `EvidenceBundle`
+- support deduplication hooks
+- support confidence scoring hooks
+- preserve provenance at the item level
+- ensure evidence items can later be cited in explanations and recommendation candidates
+
+### Expected modules
+
+- `src/services/evidence_bundle.py`
+- `src/validation/evidence_validation.py` or equivalent helper
+- any necessary schema refinements
+
+### Output expectations
+
+- every evidence item has origin, provenance, and identifiers
+- evidence bundle is ready for workflow consumption
+- evidence can be rendered independently of any narrative
+
+### After implementation
+
+- explain how the evidence bundle becomes the backbone of the workflow
+
+---
+
+## Prompt 10 — Build the workflow graph shell
+
+### Goal
+Replace the old fixed-stage UI flow with a stateful, routed, backend workflow.
+
+### Requirements
+
+- create an explicit `WorkflowState` model if not already present
+- implement a graph or graph-like orchestrator with nodes for:
+  - `create_run`
+  - `resolve_request_context`
+  - `compute_indicator_analysis`
+  - `plan_retrieval`
+  - `retrieve_local_evidence`
+  - `optionally_retrieve_web_evidence`
+  - `build_evidence_bundle`
+  - `generate_recommendation_candidates`
+  - `rank_candidates`
+  - `select_projects`
+  - `generate_explanation`
+  - `validate_output`
+  - `finalize_run`
+- implement placeholder behavior where downstream layers are not complete yet
+- make routing decisions explicit and logged
+- keep node code small and focused
+- do not hide state transitions inside giant service methods
+
+### Expected modules
+
+- `src/workflows/recommendation_graph.py`
+- `src/workflows/router.py`
+- `src/workflows/nodes/`
+
+### Output expectations
+
+- a single workflow entrypoint should execute the graph
+- run state should update as workflow advances
+- node outputs should be inspectable
+
+### After implementation
+
+- explain the state machine and route logic in plain language
+
+---
+
+## Prompt 11 — Build recommendation candidate generation
+
+### Goal
+Generate structured recommendation candidates from the evidence bundle, not final prose first.
+
+### Requirements
+
+- create a prompt registry mechanism if not already present
+- add a recommendation candidate prompt asset/module
+- require schema-constrained output into `RecommendationCandidate` or `RecommendationGenerationOutput`
+- every candidate must include:
+  - title
+  - summary
+  - problem statement
+  - intended outcome
+  - category
+  - expected public investment type
+  - supporting evidence ids
+  - confidence
+  - caveats
+- do not let this step pick final projects yet
+- do not return free-form prose only
+- keep output schema handling unit-testable
+
+### Expected modules
+
+- `src/prompts/recommendation_candidates/`
+- `src/llm/recommendation_generator.py`
+
+### Output expectations
+
+- workflow can produce recommendation candidates as typed objects
+- candidates are evidence-backed
+- prompt location and versioning are explicit
+
+### After implementation
+
+- explain how this differs from the old prompt-chained approach
+
+---
+
+## Prompt 12 — Build deterministic project ranking and selection
+
+### Goal
+Make project selection reproducible and deterministic.
+
+### Requirements
+
+- create a project filtering layer
+- create a scoring model with dimensions such as:
+  - municipality/category fit
+  - indicator-gap alignment
+  - development-plan alignment
+  - implementation readiness
+  - financing plausibility
+  - evidence support strength
+- support hard exclusions and missing-information flags
+- produce a `RankingBreakdown` for each project candidate
+- create a selector that chooses top projects based on deterministic ranking outputs
+- keep the LLM out of the ranking math unless explicitly justified and isolated
+- prepare outputs so the explanation layer can narrate them later
+
+### Expected modules
+
+- `src/ranking/project_filters.py`
+- `src/ranking/project_scorer.py`
+- `src/ranking/project_selector.py`
+
+### Output expectations
+
+- project selection is reproducible
+- each selected project has a score breakdown
+- excluded projects can show exclusion reasons
+
+### After implementation
+
+- explain the ranking pipeline and future tuning knobs
+
+---
+
+## Prompt 13 — Build the explanation generation layer
+
+### Goal
+Generate the frontend-facing explanation only after recommendation and ranking are complete.
+
+### Requirements
+
+- explanation input must be:
+  - recommendation candidates
+  - selected/ranked projects
+  - evidence bundle
+  - ranking breakdown
+- explanation output should be schema-guided if possible
+- support sections such as:
+  - executive summary
+  - why these projects were selected
+  - key evidence signals
+  - caveats / uncertainty
+- explanation must not invent projects or facts outside structured inputs
+- include evidence references or citation-friendly markers
+- keep localization/multilingual concerns out of scope unless easy to isolate
+
+### Expected modules
+
+- `src/llm/explanation_generator.py`
+- `src/prompts/explanations/`
+
+### Output expectations
+
+- narrative is grounded in structured upstream outputs
+- factual claims map back to evidence ids or citations
+- explanation is clearly separated from ranking logic
+
+### After implementation
+
+- explain how the explanation layer stays honest and bounded
+
+---
+
+## Prompt 14 — Build the project review workflow
+
+### Goal
+Allow the frontend to request a detailed review of a selected project.
+
+### Requirements
+
+- create request and response schemas for project review if not already present
+- retrieve project-specific evidence from local and optional web sources
+- generate a structured project review with sections such as:
+  - project summary
+  - relevance to municipality/category
+  - readiness / maturity
+  - financing signals
+  - implementation considerations
+  - risks / caveats
+  - citations / evidence references
+- support caching or persistence of project review results
+- expose project review via dedicated endpoints/services
+- keep this workflow decoupled from the main recommendation workflow
+
+### Expected modules
+
+- `src/services/project_review_service.py`
+- project review workflow or node set
+- relevant prompt assets
+
+### Output expectations
+
+- project review is independently callable
+- review outputs are typed and evidence-backed
+- project review reuse is possible across runs
+
+### After implementation
+
+- explain how project review differs from recommendation generation
+
+---
+
+## Prompt 15 — Build the validation layer
+
+### Goal
+Prevent unsupported or internally inconsistent outputs from being returned.
+
+### Requirements
+
+- add validators for:
+  - schema validity
+  - citation / evidence presence
+  - unsupported claim detection hooks
+  - contradiction between explanation and ranking output
+  - contradiction between recommendation and municipality/category context
+  - insufficient evidence threshold
+- create a `ValidationReport` for every completed run
+- define failure behavior:
+  - retry
+  - downgrade confidence
+  - partial result
+  - fail run
+- keep validators modular
+- do not bury validation inside generation code
+
+### Expected modules
+
+- `src/validation/schema_checks.py`
+- `src/validation/citation_checks.py`
+- `src/validation/consistency_checks.py`
+- `src/validation/run_validator.py`
+
+### Output expectations
+
+- every finished run includes a validation report
+- invalid output states are explicit
+- validation failures are inspectable by admins or developers
+
+### After implementation
+
+- explain the validation strategy and failure policy
+
+---
+
+## Prompt 16 — Build observability and trace endpoints
+
+### Goal
+Make every workflow run reconstructable and debuggable.
+
+### Requirements
+
+- log at run and node level
+- trace model calls by model name and prompt version
+- trace retrieval calls and returned chunk/source ids
+- persist selected evidence ids
+- persist ranking inputs and outputs
+- add endpoints for:
+  - run trace
+  - run evidence
+  - run validation
+- keep observability separate from business logic
+- do not overbuild full monitoring infrastructure yet
+
+### Expected modules
+
+- `src/observability/logging.py`
+- `src/observability/tracing.py`
+- API routes for run inspection
+
+### Output expectations
+
+- a completed run can be inspected after the fact
+- node-level failures and decisions are visible
+- prompt and model provenance is recorded
+
+### After implementation
+
+- explain how an engineer would debug a bad recommendation run
+
+---
+
+## Prompt 17 — Build the evaluation suite
+
+### Goal
+Create an acceptance harness for the rebuilt backend.
+
+### Requirements
+
+- define benchmark scenarios using representative municipality/category cases
+- add tests or evaluation fixtures for:
+  - deterministic analytics correctness
+  - retrieval relevance shape
+  - evidence bundle completeness
+  - ranking output consistency
+  - explanation grounding hooks
+- include a small set of “bad recommendation” cases to guard against regressions
+- keep the suite lightweight but real
+- document how to extend it later
+
+### Expected modules/files
+
+- `tests/e2e/`
+- `tests/evals/`
+- `docs/evaluation-plan.md`
+
+### Output expectations
+
+- baseline suite exists for regression checking
+- core deterministic behavior is protected
+- evaluation artifacts are understandable by humans
+
+### After implementation
+
+- summarize what the system can now test reliably
+- summarize what still requires human review
+
+---
+
+## Prompt 18 — Build the frontend-facing result contract
+
+### Goal
+Produce stable JSON payloads that any frontend can consume.
+
+### Requirements
+
+- define the result payload for a completed recommendation run
+- include:
+  - run metadata
+  - municipality/category context
+  - indicator summary
+  - recommendation candidates
+  - selected projects
+  - ranking breakdown
+  - explanation narrative
+  - evidence bundle summary
+  - citations
+  - validation report
+- define status/progress payloads for polling
+- define error payloads
+- ensure route handlers return these payloads cleanly
+- do not include UI-specific formatting or HTML
+
+### Expected modules
+
+- response schemas
+- route serialization helpers if needed
+- `docs/contracts.md` examples
+
+### Output expectations
+
+- frontend can build against stable contracts
+- result payload is complete and inspectable
+- payloads are consistent across success/failure states
+
+### After implementation
+
+- provide example JSON shapes for the main endpoints
+
+---
+
+## Prompt 19 — Clean-up and architecture review
+
+### Goal
+Perform a final architecture cleanup pass.
+
+### Tasks
+
+- identify dead code, placeholder hacks, and duplicated logic
+- tighten module boundaries
+- ensure no business logic lives in API routes
+- ensure no workflow node depends on unstructured prose where a typed schema exists
+- ensure recommendation selection is not secretly handled by the LLM
+- ensure validation is wired into completion flow
+- ensure observability hooks exist at the workflow level
+- update `README` and docs to reflect the final architecture
+
+### Deliverables
+
+- architecture cleanup commits
+- improved `README`
+- updated docs for:
+  - architecture
+  - workflows
+  - contracts
+  - evaluation
+  - prompt registry
+
+### After implementation
+
+- provide a final architecture summary
+- list remaining gaps for a future v2.1
+
+---
+
+## Prompt 20 — Migration bridge from the old repository
+
+### Goal
+Create a migration bridge document from the old `wb-ldt-de` repository to this new backend.
+
+### Requirements
+
+Identify what should be ported:
+
+- deterministic analytics logic
+- prompt content worth preserving
+- project metadata handling
+- cached output semantics if useful
+
+Identify what should not be ported:
+
+- Streamlit-specific flow
+- brittle prompt chaining
+- UI-coupled state transitions
+
+Also:
+
+- map old stages to new workflow nodes
+- list old files likely to serve as reference material only
+- produce a parity checklist for validating the rebuild against the old system’s main use cases
+
+### Output expectations
+
+- create a practical migration note in `docs/`
+- make it specific enough to guide human reviewers
+
+### After implementation
+
+- summarize the highest-risk migration areas
+
+---
+
+# Suggested operating cadence
+
+Use these prompts in batches.
+
+## Batch 1 — Prompts 0–5
+Goal:
+- backend shell
+- schemas
+- deterministic services
+- run lifecycle
+
+## Batch 2 — Prompts 6–10
+Goal:
+- ingestion
+- retrieval
+- evidence bundle
+- workflow orchestration
+
+## Batch 3 — Prompts 11–16
+Goal:
+- recommendation generation
+- deterministic ranking
+- explanation
+- validation
+- observability
+
+## Batch 4 — Prompts 17–20
+Goal:
+- evaluation
+- frontend contracts
+- cleanup
+- migration support
+
+---
+
+# Manual review checklist after each batch
+
+After each batch, review the following:
+
+- Are schemas still clean and consistent?
+- Did any business logic slip into API routes?
+- Is any step depending on prose where a schema should exist?
+- Is provenance preserved?
+- Are retrieval, ranking, and explanation still clearly separated?
+- Is the LLM doing only the jobs it should be doing?
+
+---
+
+# Master reminder before every future step
+
+Before writing or modifying code, re-check these constraints:
+
+- backend-first, no Streamlit
+- FastAPI for API layer
+- modular multi-file repository
+- custom workflow/graph orchestration
+- schema-first inter-node contracts
+- deterministic analytics separate from LLM generation
+- retrieval separate from ranking
+- explanation generated after ranking, not before
+- optional web enrichment only when policy allows
+- evidence and provenance preserved throughout
+- validation required before finalizing runs
+- no hidden logic in route handlers
+- no free-form downstream dependencies where structured output is possible
+
+If the planned implementation violates any of these, revise the design first.
+
+---
+
+# Recommended use with Codex
+
+Use this README as the master build contract for Codex.
+
+For each phase:
+
+1. Feed Codex the relevant prompt batch.
+2. Require it to state files before implementation.
+3. Require it to summarize:
+   - completed work
+   - remaining work
+   - assumptions
+4. Review each batch against the manual checklist above before moving on.
+
+---
+
+# Final note
+
+This guide is intended to rebuild `wb-ldt-de` into a production-shaped backend with:
+
+- explicit workflow state
+- typed internal contracts
+- deterministic ranking
+- grounded evidence handling
+- optional external enrichment
+- validation and auditability by default

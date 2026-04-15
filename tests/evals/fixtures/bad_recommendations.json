@@ -1,0 +1,16 @@
+[
+  {
+    "name": "excluded_project_should_not_be_selected",
+    "municipality_id": "srb-belgrade",
+    "category": "Environment",
+    "year": 2024,
+    "expected_excluded_project_id": "proj-004"
+  },
+  {
+    "name": "explanation_should_cite_known_evidence",
+    "municipality_id": "srb-belgrade",
+    "category": "Environment",
+    "year": 2024,
+    "minimum_cited_evidence_count": 1
+  }
+]
