@@ -20,7 +20,7 @@ from src.core.request_context import RequestContextMiddleware
 
 def create_app(settings: Settings | None = None, container: ServiceContainer | None = None) -> FastAPI:
     """Create app."""
-    app_settings = settings or get_settings()
+    app_settings = settings or (container.settings if container is not None else get_settings())
     configure_logging(app_settings.log_level)
 
     app = FastAPI(title=app_settings.app_name, version=app_settings.app_version)

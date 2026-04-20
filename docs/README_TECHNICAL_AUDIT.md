@@ -21,6 +21,7 @@ The system is a backend-first FastAPI service with explicit workflow state handl
 - Deterministic analytics: [gap_analysis.py](d:/Work/WB/wb-ldt-app/src/analytics/gap_analysis.py), [priority_signals.py](d:/Work/WB/wb-ldt-app/src/analytics/priority_signals.py), [municipality_profile_service.py](d:/Work/WB/wb-ldt-app/src/services/municipality_profile_service.py)
 - Run lifecycle: [run_registry.py](d:/Work/WB/wb-ldt-app/src/services/run_registry.py), [run_store.py](d:/Work/WB/wb-ldt-app/src/storage/run_store.py)
 - Ingestion: [source_registry.py](d:/Work/WB/wb-ldt-app/src/ingestion/source_registry.py), [pipeline.py](d:/Work/WB/wb-ldt-app/src/ingestion/pipeline.py), [chunking.py](d:/Work/WB/wb-ldt-app/src/ingestion/chunking.py), [sources.py](d:/Work/WB/wb-ldt-app/src/storage/sources.py)
+- Serbia staged ingestion: `src/storage/serbia_datasets.py`, `src/services/serbia_dataset_loader.py`, `src/services/serbia_document_mirror.py`, `src/services/serbia_source_ingestion.py`
 - Retrieval: [semantic.py](d:/Work/WB/wb-ldt-app/src/retrieval/semantic.py), [lexical.py](d:/Work/WB/wb-ldt-app/src/retrieval/lexical.py), [hybrid.py](d:/Work/WB/wb-ldt-app/src/retrieval/hybrid.py), [service.py](d:/Work/WB/wb-ldt-app/src/retrieval/service.py)
 - Evidence normalization: [evidence_bundle.py](d:/Work/WB/wb-ldt-app/src/services/evidence_bundle.py), [evidence_validation.py](d:/Work/WB/wb-ldt-app/src/validation/evidence_validation.py)
 - Query planning: [query_planner.py](d:/Work/WB/wb-ldt-app/src/services/query_planner.py)
@@ -334,30 +335,35 @@ Inspection endpoints:
 - `GET /v1/runs/{run_id}/evidence`
 - `GET /v1/runs/{run_id}/validation`
 
-## 12. Azure Deployment Target
+## 12. GCP / Supabase Deployment Target
 
-The intended hosted production architecture is Azure-based, even though only part of it is implemented so far.
+The intended hosted production architecture is now GCP/Supabase-based.
 
 Target stack:
 
-- Azure Database for PostgreSQL Flexible Server as the primary system of record
-- `pgvector` inside PostgreSQL for semantic chunk retrieval
-- optional Azure Blob Storage for raw uploaded documents or large source artifacts
-- Azure App Service or Azure Container Apps for the FastAPI runtime
-- secrets supplied through environment variables and eventually Azure-managed secret/config flows
+- Google Cloud Run for the FastAPI runtime
+- Google Cloud Storage for raw uploaded documents and large source artifacts
+- Supabase Postgres as the primary system of record
+- `pgvector` inside Supabase Postgres for semantic chunk retrieval
+- secrets supplied through environment variables or Cloud Run secret bindings
 
-Implemented Azure-ready pieces:
+Implemented GCP/Supabase-ready pieces:
 
 - source/chunk storage can already switch to PostgreSQL through `LDT_STORAGE_BACKEND=postgres`
 - run state, trace, and project-review persistence can also switch to PostgreSQL through `LDT_STORAGE_BACKEND=postgres`
 - semantic retrieval is designed to use PostgreSQL + `pgvector`
 - ingestion already produces embeddings suitable for vector search
+- source documents can be registered as `gs://bucket/object` URIs through `LDT_DOCUMENT_STORE_BACKEND=gcs`
+- GCS objects are downloaded to temporary local files for parser-backed ingestion
+- Cloud Run packaging files are present (`Dockerfile`, `.dockerignore`, `cloudbuild.yaml`, and deploy script)
 
-Not yet migrated:
+Still pending:
 
-- blob-backed raw source storage
+- direct browser/client upload orchestration for GCS
+- durable worker/queue handling for long-running ingestion and recommendation jobs
 
-This means the current codebase is Azure-aligned, but not fully Azure-complete.
+This means the current codebase is aligned to Cloud Run + GCS + Supabase, but still needs environment provisioning
+and production hardening before public exposure.
 
 ## 13. API Surface and Runtime
 
@@ -369,6 +375,10 @@ This means the current codebase is Azure-aligned, but not fully Azure-complete.
 - `GET /v1/admin/sources`
 - `POST /v1/admin/sources`
 - `POST /v1/admin/sources/{source_id}/ingest`
+- `GET /v1/admin/datasets/rows`
+- `GET /v1/admin/datasets/failures/mirroring`
+- `POST /v1/admin/datasets/{dataset_family}/{row_id}/mirror`
+- `POST /v1/admin/datasets/{dataset_family}/{row_id}/ingest`
 
 ### Run endpoints
 
@@ -392,7 +402,7 @@ Errors are returned as structured `ErrorResponse` payloads via [errors.py](d:/Wo
 - [seed_environment_policy.txt](d:/Work/WB/wb-ldt-app/docs/seed_environment_policy.txt)
 - [seed_environment_dataset.csv](d:/Work/WB/wb-ldt-app/docs/seed_environment_dataset.csv)
 
-Explicit admin ingestion endpoints are now available for local file-path source registration and ingestion.
+Admin endpoints are protected by `LDT_ADMIN_API_KEY` when configured, and are required in `prod`.
 
 ## 15. Test Coverage
 
@@ -436,6 +446,7 @@ Docstring policy checker:
 
 - Source metadata and chunk embeddings now have an optional PostgreSQL + pgvector backend via `LDT_STORAGE_BACKEND=postgres`.
 - Run state, traces, and review cache now share the same optional PostgreSQL backend via `LDT_STORAGE_BACKEND=postgres`.
+- Full source documents can be stored in GCS and registered through `gs://` URIs via `LDT_DOCUMENT_STORE_BACKEND=gcs`.
 - PDF/DOCX parsing depends on optional parser libraries being installed in the runtime environment.
 - OpenAI embeddings are the intended production path, but local deterministic embeddings remain the default development/test fallback.
 - Ranking uses seed-project metadata and heuristic keyword overlap; richer project metadata sources are still pending.

@@ -8,6 +8,7 @@ from src.embeddings.client import EmbeddingClient
 from src.ingestion.chunking import SemanticChunkingConfig, chunk_text_semantic
 from src.ingestion.parsers import parse_docx_to_markdownish, parse_pdf_to_markdown
 from src.schemas.source_metadata import IngestionResult, SourceChunk
+from src.storage.documents import DocumentStore, LocalDocumentStore, suffix_from_uri
 from src.storage.sources import SourceRepository
 
 
@@ -21,11 +22,13 @@ class IngestionPipeline:
         source_repository: SourceRepository,
         *,
         embedding_client: EmbeddingClient,
+        document_store: DocumentStore | None = None,
         chunking_config: SemanticChunkingConfig | None = None,
     ) -> None:
         """Initialize the instance and its dependencies."""
         self._source_repository = source_repository
         self._embedding_client = embedding_client
+        self._document_store = document_store or LocalDocumentStore()
         self._chunking_config = chunking_config or SemanticChunkingConfig()
 
     def ingest_source(self, source_id: str) -> IngestionResult:
@@ -74,19 +77,19 @@ class IngestionPipeline:
 
     def _parse_source(self, uri: str) -> tuple[str, str]:
         """Internal helper to parse source."""
-        path = Path(uri)
-        suffix = path.suffix.lower()
+        suffix = suffix_from_uri(uri)
 
-        if suffix == ".csv":
-            return self._parse_csv(path), "csv_parser"
-        if suffix == ".pdf":
-            return parse_pdf_to_markdown(path), "pymupdf4llm_markdown_parser"
-        if suffix == ".docx":
-            return parse_docx_to_markdownish(path), "mammoth_docx_parser"
-        if suffix in {".txt", ".md"}:
-            return path.read_text(encoding="utf-8"), "text_parser"
+        with self._document_store.as_local_path(uri) as path:
+            if suffix == ".csv":
+                return self._parse_csv(path), "csv_parser"
+            if suffix == ".pdf":
+                return parse_pdf_to_markdown(path), "pymupdf4llm_markdown_parser"
+            if suffix == ".docx":
+                return parse_docx_to_markdownish(path), "mammoth_docx_parser"
+            if suffix in {".txt", ".md"}:
+                return path.read_text(encoding="utf-8"), "text_parser"
 
-        return self._parse_binary_placeholder(path), "binary_placeholder_parser"
+            return self._parse_binary_placeholder(path), "binary_placeholder_parser"
 
     @staticmethod
     def _parse_csv(path: Path) -> str:

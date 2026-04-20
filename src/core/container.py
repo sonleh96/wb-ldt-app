@@ -23,6 +23,14 @@ from src.services.project_review_service import ProjectReviewService
 from src.services.query_planner import QueryPlanner
 from src.services.run_inspection_service import RunInspectionService
 from src.services.run_registry import RunRegistry
+from src.services.serbia_dataset_admin_service import SerbiaDatasetAdminService
+from src.services.serbia_dataset_loader import SerbiaDatasetLoaderService
+from src.services.serbia_document_mirror import (
+    GCSMirrorObjectStore,
+    SerbiaDocumentMirrorService,
+    UrllibRemoteDocumentFetcher,
+)
+from src.services.serbia_source_ingestion import SerbiaSourceIngestionService
 from src.services.source_admin_service import SourceAdminService
 from src.services.workflow_launcher import RecommendationWorkflowLauncher
 from src.storage.indicators import InMemoryIndicatorRepository
@@ -34,8 +42,14 @@ from src.storage.project_reviews import (
 )
 from src.storage.postgres_sources import PostgresSourceRepository
 from src.storage.projects import InMemoryProjectRepository
+from src.storage.documents import DocumentStore, build_document_store
 from src.storage.run_store import InMemoryRunStore, PostgresRunStore, RunStore
 from src.storage.run_traces import InMemoryRunTraceStore, PostgresRunTraceStore, RunTraceStore
+from src.storage.serbia_datasets import (
+    InMemorySerbiaDatasetRepository,
+    PostgresSerbiaDatasetRepository,
+    SerbiaDatasetRepository,
+)
 from src.storage.sources import InMemorySourceRepository, SourceRepository
 from src.validation.run_validator import RunValidator
 from src.validation.strict_gate import StrictEvaluationGate
@@ -53,7 +67,10 @@ class ServiceContainer:
         explanation_generator: ExplanationGenerator | None = None,
         project_review_generator: ProjectReviewGenerator | None = None,
         embedding_client: EmbeddingClient | None = None,
+        document_store: DocumentStore | None = None,
         source_repository: SourceRepository | None = None,
+        serbia_dataset_repository: SerbiaDatasetRepository | None = None,
+        serbia_document_mirror_service: SerbiaDocumentMirrorService | None = None,
         run_store: RunStore | None = None,
         project_review_store: ProjectReviewStore | None = None,
         run_trace_store: RunTraceStore | None = None,
@@ -70,6 +87,7 @@ class ServiceContainer:
         )
 
         self.embedding_client = embedding_client or build_embedding_client(self.settings)
+        self.document_store = document_store or build_document_store(self.settings)
         self.chunking_config = SemanticChunkingConfig(
             max_tokens=self.settings.semantic_chunk_max_tokens,
             overlap_tokens=self.settings.semantic_chunk_overlap_tokens,
@@ -93,12 +111,55 @@ class ServiceContainer:
         self.ingestion_pipeline = IngestionPipeline(
             self.source_repository,
             embedding_client=self.embedding_client,
+            document_store=self.document_store,
             chunking_config=self.chunking_config,
         )
 
         self.source_admin_service = SourceAdminService(
             source_registry=self.source_registry,
             ingestion_pipeline=self.ingestion_pipeline,
+            document_store=self.document_store,
+        )
+
+        if serbia_dataset_repository is not None:
+            self.serbia_dataset_repository = serbia_dataset_repository
+        elif self.settings.storage_backend.lower() == "postgres":
+            if not self.settings.database_url:
+                raise ValueError("LDT_DATABASE_URL is required when storage_backend=postgres")
+            self.serbia_dataset_repository = PostgresSerbiaDatasetRepository(
+                database_url=self.settings.database_url,
+            )
+        else:
+            self.serbia_dataset_repository = InMemorySerbiaDatasetRepository()
+        self.serbia_dataset_loader_service = SerbiaDatasetLoaderService(
+            repository=self.serbia_dataset_repository,
+        )
+        self.serbia_source_ingestion_service = SerbiaSourceIngestionService(
+            dataset_repository=self.serbia_dataset_repository,
+            source_registry=self.source_registry,
+            ingestion_pipeline=self.ingestion_pipeline,
+            source_repository=self.source_repository,
+            embedding_client=self.embedding_client,
+        )
+        self.serbia_document_mirror_service: SerbiaDocumentMirrorService | None = (
+            serbia_document_mirror_service
+        )
+        if self.serbia_document_mirror_service is None and self.settings.gcs_bucket:
+            self.serbia_document_mirror_service = SerbiaDocumentMirrorService(
+                repository=self.serbia_dataset_repository,
+                fetcher=UrllibRemoteDocumentFetcher(),
+                object_store=GCSMirrorObjectStore(
+                    bucket=self.settings.gcs_bucket,
+                    project=self.settings.gcp_project,
+                ),
+                gcs_prefix=self.settings.gcs_prefix,
+                timeout_seconds=self.settings.serbia_fetch_timeout_seconds,
+                max_retries=self.settings.serbia_fetch_max_retries,
+            )
+        self.serbia_dataset_admin_service = SerbiaDatasetAdminService(
+            repository=self.serbia_dataset_repository,
+            document_mirror_service=self.serbia_document_mirror_service,
+            source_ingestion_service=self.serbia_source_ingestion_service,
         )
 
         if self.settings.auto_seed_sources:

@@ -8,6 +8,7 @@ This repo keeps two README-style docs for every delivered batch:
 
 - Quick setup and usage guide: [README Quickstart](d:/Work/WB/wb-ldt-app/docs/README_QUICKSTART.md)
 - Detailed architecture and audit guide: [README Technical Audit](d:/Work/WB/wb-ldt-app/docs/README_TECHNICAL_AUDIT.md)
+- GCP/Supabase deployment guide: [GCP Deployment](docs/deployment-gcp.md)
 - Fresh-session context bridge: [Session Handoff](d:/Work/WB/wb-ldt-app/docs/SESSION_HANDOFF.md)
 
 ## Documentation Policy
@@ -30,6 +31,9 @@ Batch 1, Batch 2, Batch 3 strategy implementation, and Prompts 11-20 are now int
 - hybrid retrieval with RRF fusion and diagnostics
 - retrieval-time same-source context window expansion around matched chunks
 - optional PostgreSQL + pgvector chunk storage path for semantic retrieval
+- GCS-backed full-document storage for source registration and ingestion
+- staged Serbia context ingestion (SQL dataset tables -> GCS mirroring -> source/chunk embedding ingestion)
+- Cloud Run deployment packaging
 - evidence-card context packing
 - OpenAI-backed recommendation candidate generation with prompt versioning
 - deterministic project filtering, scoring, and selection with ranking breakdowns

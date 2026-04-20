@@ -14,7 +14,7 @@ This note maps the legacy Streamlit prototype in `D:\Work\WB\wb-ldt-de` to the b
 - Streamlit-specific flow and session-state orchestration from `gpbp-ldt-de.py`, `app.py`, and `src/ui.py`.
 - Brittle prompt chaining where downstream steps consume prose instead of typed outputs.
 - UI-coupled state transitions, view logic, or widget-driven control flow.
-- GCS/secret-manager assumptions that are only relevant to the old deployment shape.
+- UI-era deployment assumptions; GCS may still be used, but only through backend-owned document storage abstractions.
 
 ## Old-To-New Workflow Mapping
 

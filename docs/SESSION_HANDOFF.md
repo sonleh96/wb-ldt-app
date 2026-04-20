@@ -270,7 +270,7 @@ Practical v2.1 gaps remain:
 - Embedding payload: contextual header + chunk body for prose, schema/context + labeled row text for CSV.
 - Retrieval context policy: expand neighboring same-source chunks after retrieval rather than storing oversized chunks.
 - Optional source/chunk storage backend: PostgreSQL + pgvector via `LDT_STORAGE_BACKEND=postgres`.
-- Azure target architecture: Azure PostgreSQL Flexible Server + `pgvector`, optional Azure Blob Storage, App Service/Container Apps hosting.
+- GCP/Supabase target architecture: Cloud Run + GCS documents + Supabase Postgres with `pgvector`.
 - Completion policy: strict gate can fail run before completion.
 - Keep current run API endpoints stable to avoid client breakage.
 

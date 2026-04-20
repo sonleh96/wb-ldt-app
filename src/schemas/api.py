@@ -4,7 +4,7 @@ from pydantic import BaseModel, Field
 
 from src.schemas.domain import ProjectReview
 from src.schemas.run_state import RunState
-from src.schemas.source_metadata import SourceType
+from src.schemas.source_metadata import SourceIngestionReadiness, SourceType, SourceUrlKind
 
 
 class ProgressInfo(BaseModel):
@@ -76,11 +76,16 @@ class ProjectReviewResponse(BaseModel):
 
 
 class SourceRegistrationRequest(BaseModel):
-    """Typed schema for registering one local source."""
+    """Typed schema for registering one source."""
 
     source_type: SourceType
     title: str
     uri: str
+    source_url: str | None = None
+    document_url: str | None = None
+    landing_page_url: str | None = None
+    url_kind: SourceUrlKind | None = None
+    ingestion_readiness: SourceIngestionReadiness | None = None
     municipality_id: str | None = None
     category: str | None = None
     mime_type: str | None = None

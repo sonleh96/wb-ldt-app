@@ -20,6 +20,22 @@ SourceType = Literal[
     "dataset",
 ]
 
+SourceUrlKind = Literal[
+    "direct_document",
+    "landing_page",
+    "cloud_drive",
+    "office_doc",
+    "archive",
+    "unknown",
+]
+
+SourceIngestionReadiness = Literal[
+    "ready",
+    "needs_resolver",
+    "metadata_only",
+    "missing_url",
+]
+
 
 class SourceMetadata(BaseModel):
     """Class representing SourceMetadata."""
@@ -27,6 +43,11 @@ class SourceMetadata(BaseModel):
     source_type: SourceType
     title: str
     uri: str
+    source_url: str | None = None
+    document_url: str | None = None
+    landing_page_url: str | None = None
+    url_kind: SourceUrlKind = "unknown"
+    ingestion_readiness: SourceIngestionReadiness = "ready"
     municipality_id: str | None = None
     category: str | None = None
     mime_type: str | None = None

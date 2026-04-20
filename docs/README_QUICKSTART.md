@@ -7,7 +7,7 @@ This guide is for users who want to run the backend fast and use the current end
 - FastAPI app bootstrap with request tracing and structured error handling.
 - Recommendation run lifecycle (`pending -> queued -> running -> validating -> completed/failed/cancelled`).
 - Deterministic analytics for indicator gaps and priority signals.
-- Ingestion scaffolding for local sources with parser-backed PDF/DOCX ingestion, schema-aware CSV ingestion, semantic chunking, and contextual chunk headers.
+- Ingestion scaffolding for local or GCS-backed sources with parser-backed PDF/DOCX ingestion, schema-aware CSV ingestion, semantic chunking, and contextual chunk headers.
 - Retrieval service with `semantic`, `lexical`, and `hybrid` modes.
 - Hybrid retrieval now uses reciprocal rank fusion (RRF) diagnostics.
 - Retrieved hits are expanded with a same-source context window before evidence bundling.
@@ -91,7 +91,7 @@ Production guidance:
 
 - `local` embeddings are for deterministic tests and offline development
 - `openai` embeddings are the intended production setting
-- the production target is Azure PostgreSQL Flexible Server with `pgvector`, not an in-memory vector index
+- the production target is Supabase Postgres with `pgvector`, not an in-memory vector index
 
 Optional semantic chunking controls:
 
@@ -114,26 +114,51 @@ set LDT_DATABASE_URL=postgresql://user:password@host:5432/dbname
 When `LDT_STORAGE_BACKEND=postgres`, source metadata, chunk embeddings, run state, run traces, and project-review
 cache are all stored in PostgreSQL. Semantic retrieval uses pgvector cosine search.
 
+For Supabase, use the PostgreSQL connection string supplied by Supabase and ensure the `vector` extension is enabled.
+The embedding dimension configured by `LDT_EMBEDDING_DIMENSIONS` must match the embedding model output stored in the
+`source_chunks.embedding` vector column.
+
+Optional GCS document storage:
+
+```bash
+set LDT_DOCUMENT_STORE_BACKEND=gcs
+set LDT_GCP_PROJECT=your-gcp-project-id
+set LDT_GCS_BUCKET=your-document-bucket
+set LDT_GCS_PREFIX=ldt/sources
+```
+
+When `LDT_DOCUMENT_STORE_BACKEND=gcs`, admin source registration accepts `gs://bucket/object` URIs. The backend
+validates that the object exists, downloads it to a temporary local path for parsing, and stores source metadata plus
+chunk embeddings in the configured source repository.
+
 Optional seed-source bootstrap:
 
 ```bash
 set LDT_AUTO_SEED_SOURCES=true
 ```
 
-## Azure Deployment Notes
+## GCP Deployment Notes
 
 The intended hosted architecture is:
 
-- Azure Database for PostgreSQL Flexible Server
-- `pgvector` for semantic retrieval
-- optional Azure Blob Storage for raw source artifacts
-- Azure App Service or Azure Container Apps for the API
+- Google Cloud Run for the FastAPI runtime
+- Google Cloud Storage for full source documents
+- Supabase Postgres as the primary database
+- `pgvector` in Supabase Postgres for semantic retrieval
 
 Current implementation status:
 
-- source/chunk persistence is PostgreSQL-ready
+- source/chunk persistence is Supabase/PostgreSQL-ready
 - semantic retrieval is PostgreSQL/pgvector-ready
 - runs, traces, and project-review cache now support PostgreSQL-backed durability
+- GCS-backed document access is available for source registration and ingestion
+
+Cloud Run files are included:
+
+- `Dockerfile`
+- `.dockerignore`
+- `cloudbuild.yaml`
+- `scripts/deploy_cloud_run.sh`
 
 ## Core Endpoints
 
@@ -143,6 +168,10 @@ Current implementation status:
 - `GET /v1/admin/sources`
 - `POST /v1/admin/sources`
 - `POST /v1/admin/sources/{source_id}/ingest`
+- `GET /v1/admin/datasets/rows`
+- `GET /v1/admin/datasets/failures/mirroring`
+- `POST /v1/admin/datasets/{dataset_family}/{row_id}/mirror`
+- `POST /v1/admin/datasets/{dataset_family}/{row_id}/ingest`
 - `POST /v1/runs/recommendations`
 - `GET /v1/runs/{run_id}`
 - `GET /v1/runs/{run_id}/result`
@@ -169,6 +198,12 @@ Inspection endpoints are available at:
 - `GET /v1/runs/{run_id}/validation`
 - `POST /v1/project-reviews`
 
+Admin endpoints require authentication when `LDT_ADMIN_API_KEY` is configured:
+
+```bash
+curl -H "Authorization: Bearer $LDT_ADMIN_API_KEY" "$API_URL/v1/admin/sources"
+```
+
 ## Minimal Usage Flow
 
 1. Submit a run:
@@ -193,6 +228,46 @@ Inspection endpoints are available at:
 python -m pytest -q
 ```
 
+## Serbia Context Pipeline
+
+Serbia ingestion now uses a staged storage architecture:
+
+- raw Serbia dataset rows are normalized into dedicated Supabase/Postgres tables
+- mirrorable documents are fetched and uploaded into GCS
+- retrieval-serving sources/chunks/embeddings remain in `sources` and `source_chunks` (`pgvector`)
+
+Supported SQL dataset tables:
+
+- `serbia_national_documents`
+- `serbia_municipal_development_plans`
+- `serbia_lsg_projects`
+- `serbia_wbif_projects`
+- `serbia_wbif_tas`
+
+Stage 1, load normalized dataset rows into SQL:
+
+```bash
+python scripts/load_serbia_datasets.py --data-dir data
+```
+
+Stage 2, resolve and mirror documents to GCS:
+
+```bash
+python scripts/mirror_serbia_documents.py --batch-size 200 --refresh-mode pending_only
+```
+
+Stage 3, register and ingest mirrored plus metadata-only rows:
+
+```bash
+python scripts/ingest_serbia_sources.py --batch-size 200 --refresh-mode pending_only
+```
+
+Legacy canonical export tooling is still available:
+
+```bash
+python scripts/export_serbia_context_bundle.py --data-dir data --output-dir data/normalized
+```
+
 ## Current Scope Notes
 
 - CSV parsing renders schema-aware row records for embedding instead of raw comma-joined lines.
@@ -200,4 +275,5 @@ python -m pytest -q
 - DOCX parsing uses `mammoth` semantic HTML conversion when the dependency is installed.
 - Seed sources are opt-in through `LDT_AUTO_SEED_SOURCES=true`.
 - Explicit admin ingestion is available through `/v1/admin/sources` and `/v1/admin/sources/{source_id}/ingest`.
+- In `prod`, admin routes require `LDT_ADMIN_API_KEY`; if it is missing, admin routes return a configuration error.
 - Live web research remains policy-controlled and placeholder-backed in the main recommendation workflow.
