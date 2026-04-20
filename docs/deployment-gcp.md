@@ -47,6 +47,120 @@ LDT_AUTO_SEED_SOURCES=false
 `LDT_EMBEDDING_DIMENSIONS` must match the actual embedding size stored in Supabase. If you change embedding model or
 requested dimensions, recreate or migrate the `source_chunks.embedding` vector column accordingly.
 
+### Cloud Run Env Mutation Commands
+
+Use these command patterns to set/update env vars and secret-backed vars on Cloud Run:
+
+```bash
+# Plain env vars
+gcloud run services update "$CLOUD_RUN_SERVICE" \
+  --project "$GCP_PROJECT" \
+  --region "$GCP_REGION" \
+  --update-env-vars="KEY1=value1,KEY2=value2"
+
+# Secret-backed env vars
+gcloud run services update "$CLOUD_RUN_SERVICE" \
+  --project "$GCP_PROJECT" \
+  --region "$GCP_REGION" \
+  --update-secrets="KEY1=secret-name-1:latest,KEY2=secret-name-2:latest"
+
+# Remove plaintext env var after migrating to secret-backed env var
+gcloud run services update "$CLOUD_RUN_SERVICE" \
+  --project "$GCP_PROJECT" \
+  --region "$GCP_REGION" \
+  --remove-env-vars="KEY1"
+```
+
+Executed reference commands for `wb-ldt-app-backend` are recorded in
+`docs/deployment-backend-runbook-2026-04-20.md` under "Environment Variable Mutation Log".
+
+### Add Supabase and OpenAI Secrets (Safe Workflow)
+
+Use this flow to populate `LDT_DATABASE_URL` and `LDT_OPENAI_API_KEY` without pasting secrets into docs, chat, or shell history.
+
+1. Set deployment targets:
+
+```bash
+export GCP_PROJECT=your-gcp-project
+export GCP_REGION=asia-southeast1
+export CLOUD_RUN_SERVICE=wb-ldt-app-backend
+export RUNTIME_SA=wb-ldt-app-sv@${GCP_PROJECT}.iam.gserviceaccount.com
+gcloud config set project "$GCP_PROJECT"
+```
+
+2. Create secrets if they do not already exist:
+
+```bash
+gcloud secrets describe ldt-database-url --project="$GCP_PROJECT" >/dev/null 2>&1 || \
+  gcloud secrets create ldt-database-url --replication-policy=automatic --project="$GCP_PROJECT"
+
+gcloud secrets describe ldt-openai-api-key --project="$GCP_PROJECT" >/dev/null 2>&1 || \
+  gcloud secrets create ldt-openai-api-key --replication-policy=automatic --project="$GCP_PROJECT"
+```
+
+3. Add new secret versions using hidden terminal input:
+
+```bash
+read -s "?Paste Supabase/Postgres URL: " DB_URL; echo
+printf '%s' "$DB_URL" | gcloud secrets versions add ldt-database-url --data-file=- --project="$GCP_PROJECT"
+unset DB_URL
+
+read -s "?Paste OpenAI API key: " OPENAI_KEY; echo
+printf '%s' "$OPENAI_KEY" | gcloud secrets versions add ldt-openai-api-key --data-file=- --project="$GCP_PROJECT"
+unset OPENAI_KEY
+```
+
+4. Ensure Cloud Run runtime SA can read those secrets:
+
+```bash
+gcloud secrets add-iam-policy-binding ldt-database-url \
+  --member="serviceAccount:${RUNTIME_SA}" \
+  --role="roles/secretmanager.secretAccessor" \
+  --project="$GCP_PROJECT"
+
+gcloud secrets add-iam-policy-binding ldt-openai-api-key \
+  --member="serviceAccount:${RUNTIME_SA}" \
+  --role="roles/secretmanager.secretAccessor" \
+  --project="$GCP_PROJECT"
+```
+
+5. Bind secret-backed env vars and switch runtime mode:
+
+```bash
+gcloud run services update "$CLOUD_RUN_SERVICE" \
+  --project="$GCP_PROJECT" \
+  --region="$GCP_REGION" \
+  --update-secrets="LDT_DATABASE_URL=ldt-database-url:latest,LDT_OPENAI_API_KEY=ldt-openai-api-key:latest" \
+  --update-env-vars="LDT_STORAGE_BACKEND=postgres,LDT_EMBEDDING_PROVIDER=openai,LDT_EMBEDDING_MODEL=text-embedding-3-small,LDT_EMBEDDING_DIMENSIONS=1536"
+```
+
+6. Force a fresh revision to ensure latest secret versions are mounted:
+
+```bash
+gcloud run services update "$CLOUD_RUN_SERVICE" \
+  --project="$GCP_PROJECT" \
+  --region="$GCP_REGION" \
+  --update-env-vars="LDT_SECRETS_REFRESH_TS=$(date +%s)"
+```
+
+7. Verify configuration and health:
+
+```bash
+gcloud run services describe "$CLOUD_RUN_SERVICE" \
+  --project="$GCP_PROJECT" \
+  --region="$GCP_REGION" \
+  --format='yaml(status.latestReadyRevisionName,spec.template.spec.containers[0].env)'
+
+ID_TOKEN="$(gcloud auth print-identity-token)"
+API_URL="$(gcloud run services describe "$CLOUD_RUN_SERVICE" --project="$GCP_PROJECT" --region="$GCP_REGION" --format='value(status.url)')"
+curl -si -H "Authorization: Bearer $ID_TOKEN" "$API_URL/health"
+```
+
+Supabase URL guidance:
+- Use the Postgres connection URI from Supabase "Connect to your project".
+- Prefer the connection-pooler URI (typically port `6543`) for Cloud Run.
+- Do not use project HTTP URLs (`https://...supabase.co`) as `LDT_DATABASE_URL`.
+
 ## Serbia Ingestion Stages
 
 The production Serbia path is explicitly staged:
@@ -59,6 +173,9 @@ The production Serbia path is explicitly staged:
    - `serbia_wbif_tas`
 2. Mirror resolvable document URLs from those tables into GCS.
 3. Register mirrored/structured rows into `sources` and ingest into `source_chunks` embeddings.
+
+For the exact command log of the first successful live Postgres/OpenAI batch and DB/API verification, see
+`docs/deployment-backend-runbook-2026-04-20.md` under "First Real Postgres Serbia Batch + Verification (Live Service)".
 
 Commands:
 

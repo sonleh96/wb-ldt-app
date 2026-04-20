@@ -1,0 +1,32 @@
+{
+  "displayName": "wb-ldt-app-backend 5xx alerts",
+  "combiner": "OR",
+  "conditions": [
+    {
+      "displayName": "Cloud Run backend 5xx > 0",
+      "conditionThreshold": {
+        "filter": "resource.type=\"cloud_run_revision\" AND resource.label.\"service_name\"=\"wb-ldt-app-backend\" AND metric.type=\"logging.googleapis.com/user/wb_ldt_backend_http_5xx\"",
+        "comparison": "COMPARISON_GT",
+        "thresholdValue": 0,
+        "duration": "0s",
+        "trigger": {
+          "count": 1
+        },
+        "aggregations": [
+          {
+            "alignmentPeriod": "60s",
+            "perSeriesAligner": "ALIGN_RATE"
+          }
+        ]
+      }
+    }
+  ],
+  "enabled": true,
+  "alertStrategy": {
+    "autoClose": "1800s"
+  },
+  "documentation": {
+    "content": "Triggers when wb-ldt-app-backend emits HTTP 5xx responses.",
+    "mimeType": "text/markdown"
+  }
+}

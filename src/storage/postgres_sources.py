@@ -38,8 +38,23 @@ class PostgresSourceRepository:
         """Create required tables and extension if absent."""
 
         with self._connect() as connection:
+            try:
+                with connection.cursor() as cursor:
+                    cursor.execute("CREATE EXTENSION IF NOT EXISTS vector")
+                connection.commit()
+            except Exception as exc:
+                # Concurrent startups can race while creating the extension in
+                # managed Postgres/Supabase, surfacing as a unique violation on
+                # pg_extension_name_index even with IF NOT EXISTS.
+                duplicate_extension = (
+                    getattr(exc, "sqlstate", None) == "23505"
+                    and "pg_extension_name_index" in str(exc)
+                )
+                if not duplicate_extension:
+                    raise
+                connection.rollback()
+
             with connection.cursor() as cursor:
-                cursor.execute("CREATE EXTENSION IF NOT EXISTS vector")
                 cursor.execute(
                     """
                     CREATE TABLE IF NOT EXISTS sources (
