@@ -33,7 +33,7 @@ class Settings(BaseSettings):
     openai_model: str = Field(default="gpt-4.1-mini")
     openai_base_url: str | None = Field(default=None)
     embedding_provider: str = Field(default="local")
-    embedding_model: str = Field(default="text-embedding-3-small")
+    embedding_model: str = Field(default="text-embedding-3-large")
     embedding_dimensions: int = Field(default=256)
     chunking_strategy: str = Field(default="semantic")
     semantic_chunk_max_tokens: int = Field(default=180)

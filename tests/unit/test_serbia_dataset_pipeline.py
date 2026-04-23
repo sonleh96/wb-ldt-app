@@ -13,6 +13,7 @@ from src.retrieval.lexical import LexicalRetriever
 from src.retrieval.semantic import SemanticRetriever
 from src.retrieval.service import RetrievalService
 from src.schemas.serbia_dataset import SerbiaDatasetRow
+from src.schemas.source_metadata import SourceChunk
 from src.services.serbia_dataset_loader import SerbiaDatasetLoaderService
 from src.services.serbia_document_mirror import FetchedDocument, SerbiaDocumentMirrorService
 from src.services.serbia_source_ingestion import SerbiaSourceIngestionService
@@ -187,6 +188,81 @@ def test_mirror_stage_marks_failed_when_direct_url_download_errors() -> None:
     assert stored is not None
     assert stored.mirror_status == "failed"
     assert stored.mirror_error
+
+
+def test_mirror_pending_only_prioritizes_not_started_and_reserves_national_rows() -> None:
+    repository = InMemorySerbiaDatasetRepository()
+    documents: dict[str, FetchedDocument] = {}
+
+    for idx in range(8):
+        url = f"https://example.org/national-{idx}.pdf"
+        repository.upsert_row(
+            SerbiaDatasetRow(
+                id=f"national-{idx}",
+                dataset_family="serbia_national_documents",
+                dataset_name="serbia_national_documents",
+                source_file_name="national_strategy_policies_law.xlsx",
+                source_row_number=idx + 2,
+                title=f"National Row {idx}",
+                source_url=url,
+                url_kind="direct_document",
+                ingestion_readiness="ready",
+                mirror_status="not_started",
+                raw_payload={},
+            )
+        )
+        documents[url] = FetchedDocument(
+            content=f"national-{idx}".encode("utf-8"),
+            final_url=url,
+            mime_type="application/pdf",
+        )
+
+    for idx in range(8):
+        url = f"https://example.org/municipal-failed-{idx}.pdf"
+        repository.upsert_row(
+            SerbiaDatasetRow(
+                id=f"municipal-failed-{idx}",
+                dataset_family="serbia_municipal_development_plans",
+                dataset_name="serbia_municipal_development_plans",
+                source_file_name="serbia_local_dev_plans_final.csv",
+                source_row_number=idx + 2,
+                title=f"Municipal Failed Row {idx}",
+                municipality_name="Belgrade",
+                source_url=url,
+                url_kind="direct_document",
+                ingestion_readiness="ready",
+                mirror_status="failed",
+                raw_payload={},
+            )
+        )
+        documents[url] = FetchedDocument(
+            content=f"municipal-{idx}".encode("utf-8"),
+            final_url=url,
+            mime_type="application/pdf",
+        )
+
+    mirror = SerbiaDocumentMirrorService(
+        repository=repository,
+        fetcher=FakeFetcher(documents=documents),
+        object_store=FakeMirrorObjectStore(),
+        gcs_prefix="ldt/sources",
+        timeout_seconds=10,
+        max_retries=0,
+    )
+    summary = mirror.mirror_pending_rows(batch_size=8)
+
+    assert summary.scanned_rows == 8
+    assert summary.mirrored_rows == 8
+    mirrored_national = repository.list_rows(
+        dataset_families={"serbia_national_documents"},
+        mirror_statuses={"mirrored"},
+    )
+    assert len(mirrored_national) == 8
+    still_failed_municipal = repository.list_rows(
+        dataset_families={"serbia_municipal_development_plans"},
+        mirror_statuses={"failed"},
+    )
+    assert len(still_failed_municipal) == 8
 
 
 def test_source_ingestion_backfills_source_id_and_indexes_document_and_structured_rows(tmp_path: Path) -> None:
@@ -445,3 +521,142 @@ def test_pipeline_idempotency_prevents_duplicate_rows_mirrors_and_sources(tmp_pa
     assert first_ingest.ingested_document_rows >= 1
     assert second_ingest.ingested_document_rows == 0
     assert len(source_repository.list_sources()) >= 1
+
+
+def test_document_ingestion_falls_back_to_structured_chunk_when_parser_is_unsupported(tmp_path: Path) -> None:
+    gcs_uri = "gs://test-bucket/ldt/sources/national/srb/general/unknown/parser-gap__bin"
+    opaque_path = tmp_path / "parser-gap"
+    opaque_path.write_bytes(b"\x00\x01\x02\x03\x04")
+
+    dataset_repository = InMemorySerbiaDatasetRepository()
+    dataset_repository.upsert_row(
+        SerbiaDatasetRow(
+            id="parser-gap-row",
+            dataset_family="serbia_national_documents",
+            dataset_name="serbia_national_documents",
+            source_file_name="national_strategy_policies_law.xlsx",
+            source_row_number=7,
+            title="Parser Gap Policy",
+            category="Environment",
+            source_url="https://example.org/parser-gap",
+            resolved_document_url="https://example.org/parser-gap",
+            url_kind="direct_document",
+            ingestion_readiness="ready",
+            mirror_status="mirrored",
+            gcs_uri=gcs_uri,
+            document_mime_type="application/octet-stream",
+            raw_payload={"note": "No parser available"},
+        )
+    )
+
+    source_repository = InMemorySourceRepository()
+    source_registry = SourceRegistry(source_repository)
+    service = SerbiaSourceIngestionService(
+        dataset_repository=dataset_repository,
+        source_registry=source_registry,
+        ingestion_pipeline=IngestionPipeline(
+            source_repository,
+            embedding_client=DeterministicEmbeddingClient(),
+            document_store=FakeRemoteDocumentStore({gcs_uri: opaque_path}),
+        ),
+        source_repository=source_repository,
+        embedding_client=DeterministicEmbeddingClient(),
+    )
+
+    summary = service.ingest_pending_rows(batch_size=10, refresh_mode="force_refresh")
+
+    assert summary.ingested_document_rows == 0
+    assert summary.ingested_structured_rows == 1
+    assert summary.failed_rows == 0
+    assert summary.row_results and summary.row_results[0].status == "ingested_structured"
+
+    stored = dataset_repository.get_row(
+        dataset_family="serbia_national_documents",
+        row_id="parser-gap-row",
+    )
+    assert stored is not None and stored.source_id
+    chunks = source_repository.list_chunks_for_source(source_id=stored.source_id)
+    assert chunks
+    assert "Dataset Family: serbia_national_documents" in chunks[0].text
+    assert "Unsupported parser for" not in chunks[0].text
+
+
+def test_rebuild_all_rows_deletes_stale_serbia_chunks_and_reingests_clean_content(tmp_path: Path) -> None:
+    gcs_uri = "gs://test-bucket/ldt/sources/municipal/test/general/unknown/rebuild-plan__txt"
+    local_path = tmp_path / "rebuild-plan.txt"
+    local_path.write_text("Fresh rebuilt municipal content for retrieval.", encoding="utf-8")
+
+    dataset_repository = InMemorySerbiaDatasetRepository()
+    dataset_repository.upsert_row(
+        SerbiaDatasetRow(
+            id="rebuild-row",
+            dataset_family="serbia_municipal_development_plans",
+            dataset_name="serbia_municipal_development_plans",
+            source_file_name="serbia_local_dev_plans_final.csv",
+            source_row_number=10,
+            title="Rebuild Municipal Plan",
+            municipality_name="Uzice",
+            source_url="https://example.org/rebuild-plan.txt",
+            resolved_document_url="https://example.org/rebuild-plan.txt",
+            url_kind="direct_document",
+            ingestion_readiness="ready",
+            mirror_status="mirrored",
+            gcs_uri=gcs_uri,
+            source_id="serbia-serbia_municipal_development_plans-rebuild-row",
+            document_mime_type="text/plain",
+            raw_payload={"note": "stale placeholder should be removed"},
+        )
+    )
+
+    source_repository = InMemorySourceRepository()
+    source_registry = SourceRegistry(source_repository)
+    stale_source = source_registry.register_source(
+        source_type="municipal_development_plan",
+        title="Rebuild Municipal Plan",
+        uri=gcs_uri,
+        source_id="serbia-serbia_municipal_development_plans-rebuild-row",
+        municipality_id="srb-uzice",
+        category="Development",
+        mime_type="text/plain",
+    )
+    source_repository.replace_chunks(
+        stale_source.source_id,
+        [
+            SourceChunk(
+                chunk_id=f"{stale_source.source_id}:0",
+                source_id=stale_source.source_id,
+                chunk_index=0,
+                text="Document Title: Rebuild Municipal Plan\nUnsupported parser for rebuild-plan__txt. Binary size: 7 bytes.",
+                token_count=12,
+                embedding=[0.1, 0.2, 0.3],
+                embedding_model="deterministic",
+                municipality_id="srb-uzice",
+                category="Development",
+                source_type="municipal_development_plan",
+            )
+        ],
+    )
+
+    service = SerbiaSourceIngestionService(
+        dataset_repository=dataset_repository,
+        source_registry=source_registry,
+        ingestion_pipeline=IngestionPipeline(
+            source_repository,
+            embedding_client=DeterministicEmbeddingClient(),
+            document_store=FakeRemoteDocumentStore({gcs_uri: local_path}),
+        ),
+        source_repository=source_repository,
+        embedding_client=DeterministicEmbeddingClient(),
+    )
+
+    summary = service.rebuild_all_rows(batch_size=10)
+
+    assert summary.cleared_source_ids == 1
+    assert summary.deleted_existing_sources == 1
+    assert summary.placeholder_chunks_remaining == 0
+    assert summary.ingested_document_rows == 1
+
+    chunks = source_repository.list_chunks_for_source(source_id=stale_source.source_id)
+    assert len(chunks) >= 1
+    assert all("Unsupported parser for" not in chunk.text for chunk in chunks)
+    assert "Fresh rebuilt municipal content for retrieval." in chunks[0].text

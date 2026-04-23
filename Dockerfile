@@ -9,6 +9,7 @@ COPY pyproject.toml README.md ./
 COPY apps ./apps
 COPY src ./src
 COPY docs ./docs
+COPY data ./data
 
 RUN pip install --no-cache-dir .
 

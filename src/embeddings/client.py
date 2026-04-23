@@ -75,13 +75,20 @@ class OpenAIEmbeddingClient(EmbeddingClient):
 
     client: OpenAI
     model_name: str
+    dimensions: int | None = None
 
     def embed_texts(self, texts: list[str]) -> list[list[float]]:
         """Return embeddings for a list of texts."""
 
         if not texts:
             return []
-        response = self.client.embeddings.create(model=self.model_name, input=texts)
+        request_payload: dict[str, object] = {
+            "model": self.model_name,
+            "input": texts,
+        }
+        if self.dimensions is not None:
+            request_payload["dimensions"] = self.dimensions
+        response = self.client.embeddings.create(**request_payload)
         return [list(item.embedding) for item in response.data]
 
 
@@ -94,5 +101,9 @@ def build_embedding_client(settings: Settings) -> EmbeddingClient:
         if not settings.openai_api_key:
             raise ValueError("LDT_OPENAI_API_KEY is required when embedding_provider=openai")
         client = OpenAI(api_key=settings.openai_api_key, base_url=settings.openai_base_url)
-        return OpenAIEmbeddingClient(client=client, model_name=settings.embedding_model)
+        return OpenAIEmbeddingClient(
+            client=client,
+            model_name=settings.embedding_model,
+            dimensions=settings.embedding_dimensions,
+        )
     return DeterministicEmbeddingClient(dimensions=settings.embedding_dimensions)

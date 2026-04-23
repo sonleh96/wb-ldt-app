@@ -289,3 +289,36 @@ class PostgresSourceRepository:
                 cursor.execute(query, params)
                 rows = cursor.fetchall()
         return [SourceChunk.model_validate(row[0]) for row in rows]
+
+    def delete_sources_by_prefix(self, *, source_id_prefix: str) -> int:
+        """Delete sources and cascading chunks matching a source-id prefix."""
+
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "DELETE FROM sources WHERE source_id LIKE %s",
+                    (f"{source_id_prefix}%",),
+                )
+                deleted_count = cursor.rowcount or 0
+            connection.commit()
+        return int(deleted_count)
+
+    def count_chunks_with_text_substring(
+        self,
+        *,
+        substring: str,
+        source_id_prefix: str | None = None,
+    ) -> int:
+        """Count chunks whose text contains a substring, optionally scoped by source prefix."""
+
+        clauses = ["text LIKE %s"]
+        params: list[object] = [f"%{substring}%"]
+        if source_id_prefix:
+            clauses.append("source_id LIKE %s")
+            params.append(f"{source_id_prefix}%")
+        query = f"SELECT COUNT(*) FROM source_chunks WHERE {' AND '.join(clauses)}"
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(query, params)
+                row = cursor.fetchone()
+        return int(row[0]) if row is not None else 0

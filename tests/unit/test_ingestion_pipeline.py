@@ -1,5 +1,6 @@
 from pathlib import Path
 from typing import Iterator
+import zipfile
 
 import pytest
 from contextlib import contextmanager
@@ -140,3 +141,133 @@ def test_ingestion_pipeline_parses_gcs_uri_through_document_store(tmp_path: Path
     assert result.parser_used == "text_parser"
     assert result.chunk_count > 0
     assert source.normalized_metadata["storage_backend"] == "gcs"
+
+
+def test_ingestion_pipeline_uses_pdf_parser_for_mirrored_suffix_hint(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    local_copy = tmp_path / "mirrored-hint-file"
+    local_copy.write_bytes(b"%PDF-1.4 fake content")
+    mirrored_uri = "gs://ldt-documents/ldt/sources/municipal/example/general/unknown/example-plan__pdf"
+
+    monkeypatch.setattr(
+        "src.ingestion.pipeline.parse_pdf_to_markdown",
+        lambda path: "# Mirrored PDF\n\nParsed through suffix hint.",
+    )
+
+    source_repo = InMemorySourceRepository()
+    registry = SourceRegistry(source_repo)
+    pipeline = IngestionPipeline(
+        source_repo,
+        embedding_client=DeterministicEmbeddingClient(),
+        document_store=FakeRemoteDocumentStore({mirrored_uri: local_copy}),
+    )
+
+    source = registry.register_source(
+        source_type="municipal_development_plan",
+        title="Mirrored PDF Hint",
+        uri=mirrored_uri,
+        municipality_id="srb-test",
+        category="Development",
+        mime_type="application/pdf",
+    )
+
+    result = pipeline.ingest_source(source.source_id)
+    assert result.parser_used == "pymupdf4llm_markdown_parser"
+    assert result.chunk_count > 0
+
+
+def test_ingestion_pipeline_uses_mime_fallback_when_uri_has_no_suffix(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    local_copy = tmp_path / "suffixless-source"
+    local_copy.write_bytes(b"%PDF-1.4 fake content")
+    suffixless_uri = "gs://ldt-documents/ldt/sources/national/srb/general/unknown/policy-binary-object"
+
+    monkeypatch.setattr(
+        "src.ingestion.pipeline.parse_pdf_to_markdown",
+        lambda path: "# MIME Routed PDF\n\nParsed through MIME fallback.",
+    )
+
+    source_repo = InMemorySourceRepository()
+    registry = SourceRegistry(source_repo)
+    pipeline = IngestionPipeline(
+        source_repo,
+        embedding_client=DeterministicEmbeddingClient(),
+        document_store=FakeRemoteDocumentStore({suffixless_uri: local_copy}),
+    )
+
+    source = registry.register_source(
+        source_type="policy_document",
+        title="Suffixless PDF",
+        uri=suffixless_uri,
+        municipality_id="srb-test",
+        category="Environment",
+        mime_type="application/pdf",
+    )
+
+    result = pipeline.ingest_source(source.source_id)
+    assert result.parser_used == "pymupdf4llm_markdown_parser"
+    assert result.chunk_count > 0
+
+
+def test_ingestion_pipeline_sniffs_pdf_signature_when_uri_and_mime_are_missing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    local_copy = tmp_path / "signature-only-payload"
+    local_copy.write_bytes(b"%PDF-1.4\n% signature-only mock")
+    suffixless_uri = "gs://ldt-documents/ldt/sources/national/srb/general/unknown/policy-signature-object"
+
+    monkeypatch.setattr(
+        "src.ingestion.pipeline.parse_pdf_to_markdown",
+        lambda path: "# Signature Routed PDF\n\nParsed through binary-signature sniffing.",
+    )
+
+    source_repo = InMemorySourceRepository()
+    registry = SourceRegistry(source_repo)
+    pipeline = IngestionPipeline(
+        source_repo,
+        embedding_client=DeterministicEmbeddingClient(),
+        document_store=FakeRemoteDocumentStore({suffixless_uri: local_copy}),
+    )
+
+    source = registry.register_source(
+        source_type="policy_document",
+        title="Signature Routed PDF",
+        uri=suffixless_uri,
+        municipality_id="srb-test",
+        category="Environment",
+        mime_type=None,
+    )
+
+    result = pipeline.ingest_source(source.source_id)
+    assert result.parser_used == "pymupdf4llm_markdown_parser"
+    assert result.chunk_count > 0
+
+
+def test_ingestion_pipeline_parses_zip_archive_members(tmp_path: Path) -> None:
+    zip_path = tmp_path / "municipal-archive.zip"
+    with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("plan/overview.txt", "Municipal plan chapter 1.\nChapter 2 implementation.")
+        archive.writestr("plan/table.csv", "field,value\nbudget,100\n")
+
+    source_repo = InMemorySourceRepository()
+    registry = SourceRegistry(source_repo)
+    pipeline = IngestionPipeline(source_repo, embedding_client=DeterministicEmbeddingClient())
+
+    source = registry.register_source(
+        source_type="municipal_development_plan",
+        title="ZIP Plan",
+        uri=str(zip_path),
+        municipality_id="srb-zip-test",
+        category="Development",
+        mime_type="application/zip",
+    )
+
+    result = pipeline.ingest_source(source.source_id)
+    assert result.parser_used == "zip_archive_parser"
+    assert result.chunk_count > 0
+    chunks = source_repo.list_chunks_for_source(source_id=source.source_id)
+    assert chunks
+    combined = "\n".join(chunk.text for chunk in chunks)
+    assert "ZIP Member: plan/overview.txt" in combined

@@ -266,7 +266,7 @@ Practical v2.1 gaps remain:
 - Context format: evidence cards (not raw top-k chunk pass-through).
 - Retrieval baseline: hybrid lexical+semantic with RRF fusion.
 - Chunking strategy: semantic chunking for prose, schema-aware labeled records for CSV/tabular data.
-- Embedding strategy: deterministic local embeddings for offline tests, OpenAI `text-embedding-3-small` as the intended production default.
+- Embedding strategy: deterministic local embeddings for offline tests, OpenAI `text-embedding-3-large` as the intended production default.
 - Embedding payload: contextual header + chunk body for prose, schema/context + labeled row text for CSV.
 - Retrieval context policy: expand neighboring same-source chunks after retrieval rather than storing oversized chunks.
 - Optional source/chunk storage backend: PostgreSQL + pgvector via `LDT_STORAGE_BACKEND=postgres`.

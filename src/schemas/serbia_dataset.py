@@ -145,4 +145,7 @@ class SerbiaSourceIngestionSummary(BaseModel):
     ingested_structured_rows: int = 0
     skipped_rows: int = 0
     failed_rows: int = 0
+    cleared_source_ids: int = 0
+    deleted_existing_sources: int = 0
+    placeholder_chunks_remaining: int = 0
     row_results: list[SerbiaDatasetToSourceResult] = Field(default_factory=list)

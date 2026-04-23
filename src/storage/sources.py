@@ -76,6 +76,17 @@ class SourceRepository(Protocol):
     ) -> list[SourceChunk]:
         """Return ordered chunks for one source, optionally bounded by chunk index."""
 
+    def delete_sources_by_prefix(self, *, source_id_prefix: str) -> int:
+        """Delete sources and cascading chunks whose source id matches a prefix."""
+
+    def count_chunks_with_text_substring(
+        self,
+        *,
+        substring: str,
+        source_id_prefix: str | None = None,
+    ) -> int:
+        """Count chunks whose text contains a substring, optionally scoped by source prefix."""
+
 
 class InMemorySourceRepository:
     """In-memory implementation for SourceRepository."""
@@ -187,3 +198,29 @@ class InMemorySourceRepository:
                 continue
             filtered.append(chunk)
         return sorted(filtered, key=lambda item: item.chunk_index)
+
+    def delete_sources_by_prefix(self, *, source_id_prefix: str) -> int:
+        """Delete in-memory sources and chunks matching a prefix."""
+
+        with self._lock:
+            matching_source_ids = [source_id for source_id in self._sources if source_id.startswith(source_id_prefix)]
+            for source_id in matching_source_ids:
+                self._sources.pop(source_id, None)
+                self._chunks_by_source.pop(source_id, None)
+        return len(matching_source_ids)
+
+    def count_chunks_with_text_substring(
+        self,
+        *,
+        substring: str,
+        source_id_prefix: str | None = None,
+    ) -> int:
+        """Count in-memory chunks containing a substring."""
+
+        with self._lock:
+            total = 0
+            for source_id, chunks in self._chunks_by_source.items():
+                if source_id_prefix and not source_id.startswith(source_id_prefix):
+                    continue
+                total += sum(1 for chunk in chunks if substring in chunk.text)
+        return total

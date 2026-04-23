@@ -50,6 +50,9 @@ class SerbiaDatasetRepository(Protocol):
     ) -> list[SerbiaDatasetRow]:
         """Return rows filtered by lifecycle state."""
 
+    def clear_source_ids(self, *, dataset_families: set[SerbiaDatasetFamily] | None = None) -> int:
+        """Clear source_id values so rows can be treated as pending again."""
+
 
 class InMemorySerbiaDatasetRepository:
     """In-memory implementation for Serbia dataset staging rows."""
@@ -112,6 +115,19 @@ class InMemorySerbiaDatasetRepository:
         if limit is not None:
             return filtered[:limit]
         return filtered
+
+    def clear_source_ids(self, *, dataset_families: set[SerbiaDatasetFamily] | None = None) -> int:
+        """Clear in-memory source ids across selected families."""
+
+        families = dataset_families or set(SERBIA_DATASET_TABLES.keys())
+        cleared = 0
+        for family in families:
+            for row_id, row in list(self._rows[family].items()):
+                if not row.source_id:
+                    continue
+                self._rows[family][row_id] = row.model_copy(update={"source_id": None, "updated_at": utcnow()})
+                cleared += 1
+        return cleared
 
 
 class PostgresSerbiaDatasetRepository:
@@ -359,6 +375,26 @@ class PostgresSerbiaDatasetRepository:
         if limit is not None:
             return rows[:limit]
         return rows
+
+    def clear_source_ids(self, *, dataset_families: set[SerbiaDatasetFamily] | None = None) -> int:
+        """Clear source ids in SQL across selected dataset families."""
+
+        families = dataset_families or set(SERBIA_DATASET_TABLES.keys())
+        cleared = 0
+        for family in families:
+            table_name = SERBIA_DATASET_TABLES[family]
+            with self._connect() as connection:
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        f"""
+                        UPDATE {table_name}
+                        SET source_id = NULL, updated_at = NOW()
+                        WHERE source_id IS NOT NULL
+                        """
+                    )
+                    cleared += int(cursor.rowcount or 0)
+                connection.commit()
+        return cleared
 
     def _list_rows_for_family(
         self,

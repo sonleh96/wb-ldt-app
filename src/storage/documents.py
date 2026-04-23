@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from contextlib import AbstractContextManager, contextmanager
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -47,7 +48,38 @@ def filename_from_uri(uri: str) -> str:
 def suffix_from_uri(uri: str) -> str:
     """Return the lowercase filename suffix from a local or GCS URI."""
 
-    return Path(filename_from_uri(uri)).suffix.lower()
+    filename = filename_from_uri(uri)
+    suffix = Path(filename).suffix.lower()
+    if suffix:
+        return suffix
+
+    match = re.search(r"__([a-zA-Z0-9]{2,8})$", filename)
+    if not match:
+        return ""
+    hinted_extension = match.group(1).lower()
+    known_hints = {
+        "pdf",
+        "doc",
+        "docx",
+        "txt",
+        "md",
+        "csv",
+        "zip",
+        "rar",
+        "7z",
+        "tar",
+        "tgz",
+        "html",
+        "htm",
+        "rtf",
+        "xls",
+        "xlsx",
+        "ppt",
+        "pptx",
+    }
+    if hinted_extension not in known_hints:
+        return ""
+    return f".{hinted_extension}"
 
 
 class DocumentStore(Protocol):

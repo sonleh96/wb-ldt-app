@@ -84,7 +84,7 @@ network access. For real semantic quality, set:
 
 ```bash
 set LDT_EMBEDDING_PROVIDER=openai
-set LDT_EMBEDDING_MODEL=text-embedding-3-small
+set LDT_EMBEDDING_MODEL=text-embedding-3-large
 ```
 
 Production guidance:
@@ -248,19 +248,37 @@ Stage 1, load normalized dataset rows into SQL:
 
 ```bash
 python scripts/load_serbia_datasets.py --data-dir data
+# or (Cloud Run-safe module entrypoint):
+python -m src.jobs.load_serbia_datasets --data-dir data
 ```
 
 Stage 2, resolve and mirror documents to GCS:
 
 ```bash
 python scripts/mirror_serbia_documents.py --batch-size 200 --refresh-mode pending_only
+# or (Cloud Run-safe module entrypoint):
+python -m src.jobs.mirror_serbia_documents --batch-size 200 --refresh-mode pending_only
 ```
 
 Stage 3, register and ingest mirrored plus metadata-only rows:
 
 ```bash
 python scripts/ingest_serbia_sources.py --batch-size 200 --refresh-mode pending_only
+# or (Cloud Run-safe module entrypoint):
+python -m src.jobs.ingest_serbia_sources --batch-size 200 --refresh-mode pending_only
 ```
+
+Local pre-deploy smoke (creates local chunk artifacts and runs semantic retrieval checks):
+
+```bash
+python scripts/local_serbia_rag_smoke.py --data-dir data --output-dir .local/serbia-smoke
+```
+
+Artifacts:
+
+- `.local/serbia-smoke/chunks.json`
+- `.local/serbia-smoke/smoke_report.json`
+- `.local/serbia-smoke/smoke_report_full.json`
 
 Legacy canonical export tooling is still available:
 

@@ -170,7 +170,7 @@ gcloud run services update wb-ldt-app-backend \
 gcloud run services update wb-ldt-app-backend \
   --region=asia-southeast1 \
   --project=wb-ldt \
-  --update-env-vars=LDT_STORAGE_BACKEND=memory,LDT_DOCUMENT_STORE_BACKEND=gcs,LDT_GCP_PROJECT=wb-ldt,LDT_GCS_BUCKET=wb-ldt,LDT_GCS_PREFIX=ldt/sources,LDT_SERBIA_DATASET_LOADING_ENABLED=true,LDT_SERBIA_DOCUMENT_MIRRORING_ENABLED=true,LDT_SERBIA_INGESTION_BATCH_SIZE=200,LDT_SERBIA_FETCH_TIMEOUT_SECONDS=30,LDT_SERBIA_FETCH_MAX_RETRIES=2,LDT_SERBIA_REFRESH_MODE=pending_only,LDT_EMBEDDING_PROVIDER=local,LDT_EMBEDDING_MODEL=text-embedding-3-small,LDT_EMBEDDING_DIMENSIONS=256,LDT_OPENAI_MODEL=gpt-4.1-mini,LDT_AUTO_SEED_SOURCES=false
+  --update-env-vars=LDT_STORAGE_BACKEND=memory,LDT_DOCUMENT_STORE_BACKEND=gcs,LDT_GCP_PROJECT=wb-ldt,LDT_GCS_BUCKET=wb-ldt,LDT_GCS_PREFIX=ldt/sources,LDT_SERBIA_DATASET_LOADING_ENABLED=true,LDT_SERBIA_DOCUMENT_MIRRORING_ENABLED=true,LDT_SERBIA_INGESTION_BATCH_SIZE=200,LDT_SERBIA_FETCH_TIMEOUT_SECONDS=30,LDT_SERBIA_FETCH_MAX_RETRIES=2,LDT_SERBIA_REFRESH_MODE=pending_only,LDT_EMBEDDING_PROVIDER=local,LDT_EMBEDDING_MODEL=text-embedding-3-large,LDT_EMBEDDING_DIMENSIONS=256,LDT_OPENAI_MODEL=gpt-4.1-mini,LDT_AUTO_SEED_SOURCES=false
 ```
 
 4. Secret env bindings prepared for future production switch:
@@ -180,6 +180,31 @@ gcloud run services update wb-ldt-app-backend \
   --region=asia-southeast1 \
   --project=wb-ldt \
   --update-secrets=LDT_DATABASE_URL=ldt-database-url:latest,LDT_OPENAI_API_KEY=ldt-openai-api-key:latest
+```
+
+5. Embedding model uplift to multilingual-stronger OpenAI model (`text-embedding-3-large`) while keeping
+   pgvector-compatible dimensions (`1536`):
+
+```bash
+gcloud run services update wb-ldt-app-backend \
+  --region=asia-southeast1 \
+  --project=wb-ldt \
+  --update-env-vars=LDT_EMBEDDING_MODEL=text-embedding-3-large,LDT_EMBEDDING_DIMENSIONS=1536
+
+gcloud alpha run jobs update wb-ldt-serbia-stage3-ingest \
+  --region=asia-southeast1 \
+  --project=wb-ldt \
+  --update-env-vars=LDT_EMBEDDING_MODEL=text-embedding-3-large,LDT_EMBEDDING_DIMENSIONS=1536
+
+gcloud alpha run jobs update wb-ldt-serbia-first-batch \
+  --region=asia-southeast1 \
+  --project=wb-ldt \
+  --update-env-vars=LDT_EMBEDDING_MODEL=text-embedding-3-large,LDT_EMBEDDING_DIMENSIONS=1536
+
+gcloud alpha run jobs update wb-ldt-serbia-stage2-mirror \
+  --region=asia-southeast1 \
+  --project=wb-ldt \
+  --update-env-vars=LDT_EMBEDDING_MODEL=text-embedding-3-large,LDT_EMBEDDING_DIMENSIONS=1536
 ```
 
 Current note:
@@ -221,7 +246,7 @@ gcloud run services update "$CLOUD_RUN_SERVICE" \
   --project="$GCP_PROJECT" \
   --region="$GCP_REGION" \
   --update-secrets="LDT_DATABASE_URL=ldt-database-url:latest,LDT_OPENAI_API_KEY=ldt-openai-api-key:latest" \
-  --update-env-vars="LDT_STORAGE_BACKEND=postgres,LDT_EMBEDDING_PROVIDER=openai,LDT_EMBEDDING_MODEL=text-embedding-3-small,LDT_EMBEDDING_DIMENSIONS=1536"
+  --update-env-vars="LDT_STORAGE_BACKEND=postgres,LDT_EMBEDDING_PROVIDER=openai,LDT_EMBEDDING_MODEL=text-embedding-3-large,LDT_EMBEDDING_DIMENSIONS=1536"
 
 # Force new revision to refresh mounted secret versions
 gcloud run services update "$CLOUD_RUN_SERVICE" \
@@ -242,7 +267,7 @@ gcloud run services describe "$CLOUD_RUN_SERVICE" \
 If startup fails after switching to Postgres/OpenAI:
 - check revision logs for the exact exception
 - ensure `LDT_DATABASE_URL` is a valid Postgres URI (not Supabase HTTP URL)
-- confirm `LDT_EMBEDDING_DIMENSIONS` matches chosen embedding model output (`1536` for `text-embedding-3-small`)
+- confirm `LDT_EMBEDDING_DIMENSIONS` matches chosen embedding configuration (`1536` for `text-embedding-3-large` in this deployment)
 
 ## IAM and Guardrail Commands Executed
 
@@ -329,7 +354,7 @@ Expected key values in this successful run:
 
 - `LDT_STORAGE_BACKEND=postgres`
 - `LDT_EMBEDDING_PROVIDER=openai`
-- `LDT_EMBEDDING_MODEL=text-embedding-3-small`
+- `LDT_EMBEDDING_MODEL=text-embedding-3-large`
 - `LDT_EMBEDDING_DIMENSIONS=1536`
 - `LDT_DATABASE_URL` from `ldt-database-url:latest`
 - `LDT_OPENAI_API_KEY` from `ldt-openai-api-key:latest`
@@ -419,7 +444,7 @@ gcloud alpha run jobs deploy wb-ldt-serbia-first-batch \
   --image="$IMAGE" \
   --service-account="$RUNTIME_SA" \
   --set-secrets="LDT_DATABASE_URL=ldt-database-url:latest,LDT_OPENAI_API_KEY=ldt-openai-api-key:latest" \
-  --set-env-vars="LDT_ENVIRONMENT=prod,LDT_STORAGE_BACKEND=postgres,LDT_DOCUMENT_STORE_BACKEND=gcs,LDT_GCP_PROJECT=wb-ldt,LDT_GCS_BUCKET=wb-ldt,LDT_GCS_PREFIX=ldt/sources,LDT_SERBIA_DATASET_LOADING_ENABLED=true,LDT_SERBIA_DOCUMENT_MIRRORING_ENABLED=true,LDT_SERBIA_INGESTION_BATCH_SIZE=200,LDT_SERBIA_FETCH_TIMEOUT_SECONDS=5,LDT_SERBIA_FETCH_MAX_RETRIES=0,LDT_SERBIA_REFRESH_MODE=pending_only,LDT_EMBEDDING_PROVIDER=openai,LDT_EMBEDDING_MODEL=text-embedding-3-small,LDT_EMBEDDING_DIMENSIONS=1536,LDT_OPENAI_MODEL=gpt-4.1-mini,LDT_AUTO_SEED_SOURCES=false" \
+  --set-env-vars="LDT_ENVIRONMENT=prod,LDT_STORAGE_BACKEND=postgres,LDT_DOCUMENT_STORE_BACKEND=gcs,LDT_GCP_PROJECT=wb-ldt,LDT_GCS_BUCKET=wb-ldt,LDT_GCS_PREFIX=ldt/sources,LDT_SERBIA_DATASET_LOADING_ENABLED=true,LDT_SERBIA_DOCUMENT_MIRRORING_ENABLED=true,LDT_SERBIA_INGESTION_BATCH_SIZE=200,LDT_SERBIA_FETCH_TIMEOUT_SECONDS=5,LDT_SERBIA_FETCH_MAX_RETRIES=0,LDT_SERBIA_REFRESH_MODE=pending_only,LDT_EMBEDDING_PROVIDER=openai,LDT_EMBEDDING_MODEL=text-embedding-3-large,LDT_EMBEDDING_DIMENSIONS=1536,LDT_OPENAI_MODEL=gpt-4.1-mini,LDT_AUTO_SEED_SOURCES=false" \
   --command=python \
   --args=-c,"import base64;exec(base64.b64decode('${BATCH_SCRIPT_B64}').decode())"
 ```
@@ -559,6 +584,89 @@ The first live Postgres/OpenAI batch completed successfully for:
 
 Document mirroring and document-backed ingestion were intentionally not part of this first successful run and remain to
 be executed in the next stage.
+
+## CLI Command Categories Used (Stage 2 Mirroring + Verification)
+
+This is a concise map of the command types used to complete Stage 2 safely while skipping already mirrored rows.
+
+1. Build and publish patched backend image
+
+```bash
+gcloud builds submit --project="$GCP_PROJECT" --tag="$IMAGE_TAG"
+```
+
+2. Deploy/update Cloud Run Job configuration
+
+```bash
+gcloud alpha run jobs deploy wb-ldt-serbia-stage2-mirror \
+  --project="$GCP_PROJECT" \
+  --region="$GCP_REGION" \
+  --image="$IMAGE_TAG" \
+  --set-secrets=... \
+  --set-env-vars=... \
+  --command=python \
+  --args=-c,"..."
+```
+
+3. Execute mirroring job runs and wait for completion
+
+```bash
+gcloud alpha run jobs execute wb-ldt-serbia-stage2-mirror \
+  --project="$GCP_PROJECT" \
+  --region="$GCP_REGION" \
+  --wait
+```
+
+4. Inspect execution status / troubleshoot failures
+
+```bash
+gcloud alpha run jobs executions list --project="$GCP_PROJECT" --region="$GCP_REGION" --job=wb-ldt-serbia-stage2-mirror
+gcloud alpha run jobs executions describe <execution-name> --project="$GCP_PROJECT" --region="$GCP_REGION"
+gcloud alpha run jobs executions cancel <execution-name> --project="$GCP_PROJECT" --region="$GCP_REGION" --quiet
+```
+
+5. Pull runtime logs and parse structured job output
+
+```bash
+gcloud logging read 'resource.type="cloud_run_job" AND labels."run.googleapis.com/execution_name"="<execution-name>"' \
+  --project="$GCP_PROJECT" \
+  --limit=200 \
+  --format=json > /tmp/<execution>.json
+
+python3 - <<'PY'
+import json
+entries = json.load(open('/tmp/<execution>.json'))
+# extract jsonPayload summary blocks
+PY
+```
+
+6. Query live admin API state for before/after verification
+
+```bash
+ID_TOKEN="$(gcloud auth print-identity-token)"
+ADMIN_KEY="$(gcloud secrets versions access latest --secret=ldt-admin-api-key --project="$GCP_PROJECT")"
+curl -sf \
+  -H "X-Serverless-Authorization: Bearer $ID_TOKEN" \
+  -H "Authorization: Bearer $ADMIN_KEY" \
+  "$API_URL/v1/admin/datasets/rows?limit=1000" > /tmp/rows.json
+```
+
+7. Compute summaries from API snapshots
+
+```bash
+python3 - <<'PY'
+import json
+from collections import Counter
+rows = json.load(open('/tmp/rows.json'))
+print(Counter(r.get('mirror_status') for r in rows))
+PY
+```
+
+### Notes From This Run Pattern
+
+- `pending_only` mode was intentionally used to skip already mirrored rows.
+- Fairness fix was deployed via new image build before rerunning Stage 2.
+- For local environments where `gcloud` resolves to an incompatible Python, `CLOUDSDK_PYTHON` was set explicitly.
 
 ## Recommended Next Hardening
 

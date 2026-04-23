@@ -12,10 +12,11 @@ from src.schemas.serbia_dataset import (
     SerbiaDatasetFamily,
     SerbiaDatasetRow,
     SerbiaDatasetToSourceResult,
+    SerbiaDatasetToSourceStatus,
     SerbiaIngestionJobRefreshMode,
     SerbiaSourceIngestionSummary,
 )
-from src.schemas.source_metadata import SourceChunk, SourceType
+from src.schemas.source_metadata import SourceChunk, SourceMetadata, SourceType
 from src.storage.serbia_datasets import SerbiaDatasetRepository
 from src.storage.sources import SourceRepository
 
@@ -27,6 +28,9 @@ FAMILY_SOURCE_TYPE_MAP: dict[str, SourceType] = {
     "serbia_wbif_projects": "project_page",
     "serbia_wbif_tas": "project_page",
 }
+
+SERBIA_SOURCE_ID_PREFIX = "serbia-"
+UNSUPPORTED_PARSER_SUBSTRING = "Unsupported parser for "
 
 
 class SerbiaSourceIngestionService:
@@ -70,6 +74,8 @@ class SerbiaSourceIngestionService:
             summary.row_results.append(result)
             if result.status == "ingested_document":
                 summary.ingested_document_rows += 1
+            elif result.status == "ingested_structured":
+                summary.ingested_structured_rows += 1
             elif result.status == "failed":
                 summary.failed_rows += 1
             else:
@@ -90,6 +96,38 @@ class SerbiaSourceIngestionService:
                 summary.failed_rows += 1
             else:
                 summary.skipped_rows += 1
+
+        return summary
+
+    def rebuild_all_rows(self, *, batch_size: int) -> SerbiaSourceIngestionSummary:
+        """Delete Serbia retrieval state and rebuild all rows from dataset tables."""
+
+        summary = SerbiaSourceIngestionSummary()
+        summary.cleared_source_ids = self._dataset_repository.clear_source_ids()
+        summary.deleted_existing_sources = self._source_repository.delete_sources_by_prefix(
+            source_id_prefix=SERBIA_SOURCE_ID_PREFIX
+        )
+
+        while True:
+            batch_summary = self.ingest_pending_rows(batch_size=batch_size, refresh_mode="pending_only")
+            summary.scanned_rows += batch_summary.scanned_rows
+            summary.ingested_document_rows += batch_summary.ingested_document_rows
+            summary.ingested_structured_rows += batch_summary.ingested_structured_rows
+            summary.skipped_rows += batch_summary.skipped_rows
+            summary.failed_rows += batch_summary.failed_rows
+            summary.row_results.extend(batch_summary.row_results)
+            if batch_summary.scanned_rows == 0:
+                break
+
+        summary.placeholder_chunks_remaining = self._source_repository.count_chunks_with_text_substring(
+            substring=UNSUPPORTED_PARSER_SUBSTRING,
+            source_id_prefix=SERBIA_SOURCE_ID_PREFIX,
+        )
+        if summary.placeholder_chunks_remaining:
+            raise RuntimeError(
+                "Serbia rebuild completed but placeholder parser chunks remain: "
+                f"{summary.placeholder_chunks_remaining}"
+            )
 
         return summary
 
@@ -147,14 +185,27 @@ class SerbiaSourceIngestionService:
                 category=row.category,
                 mime_type=row.document_mime_type,
             )
-            self._ingestion_pipeline.ingest_source(source.source_id)
-            self._dataset_repository.upsert_row(row.model_copy(update={"source_id": source.source_id}))
+            ingestion_result = self._ingestion_pipeline.ingest_source(source.source_id)
+            parser_fallback_reason: str | None = None
+            status: SerbiaDatasetToSourceStatus = "ingested_document"
+            if ingestion_result.parser_used == "binary_placeholder_parser":
+                parser_fallback_reason = (
+                    "Document parser fallback used structured row text because no parser matched mirrored binary."
+                )
+                self._replace_chunks_with_structured_fallback(source=source, row=row)
+                status = "ingested_structured"
+
+            dataset_updates: dict[str, str | None] = {"source_id": source.source_id}
+            if parser_fallback_reason:
+                dataset_updates["mirror_error"] = parser_fallback_reason
+            self._dataset_repository.upsert_row(row.model_copy(update=dataset_updates))
             return SerbiaDatasetToSourceResult(
                 dataset_family=row.dataset_family,
                 row_id=row.id,
-                status="ingested_document",
+                status=status,
                 source_id=source.source_id,
                 source_type=source_type,
+                reason=parser_fallback_reason,
             )
         except Exception as exc:
             self._dataset_repository.upsert_row(row.model_copy(update={"mirror_error": str(exc)}))
@@ -166,6 +217,31 @@ class SerbiaSourceIngestionService:
                 source_type=source_type,
                 reason=str(exc),
             )
+
+    def _replace_chunks_with_structured_fallback(self, *, source: SourceMetadata, row: SerbiaDatasetRow) -> None:
+        """Replace low-value binary-placeholder chunks with structured row context."""
+
+        text = _render_structured_text(row)
+        if not text.strip():
+            return
+        embedding = self._embedding_client.embed_texts([text])[0]
+        chunk = SourceChunk(
+            chunk_id=f"{source.source_id}:0",
+            source_id=source.source_id,
+            chunk_index=0,
+            text=text,
+            body_text=text,
+            header_text=f"structured-row-fallback | {row.dataset_family} | {row.title}",
+            section_path=["serbia-dataset-row-fallback", row.dataset_family],
+            token_count=max(1, len(re.findall(r"\S+", text))),
+            embedding=embedding,
+            embedding_model=self._embedding_client.model_name,
+            semantic_group_id=0,
+            municipality_id=source.municipality_id,
+            category=source.category,
+            source_type=source.source_type,
+        )
+        self._source_repository.replace_chunks(source.source_id, [chunk])
 
     def _ingest_structured_row(self, row: SerbiaDatasetRow) -> SerbiaDatasetToSourceResult:
         """Ingest one row as structured metadata-first retrieval context."""

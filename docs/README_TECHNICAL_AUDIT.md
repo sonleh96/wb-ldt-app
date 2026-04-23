@@ -210,7 +210,7 @@ Hybrid retrieval is retained because:
 Two embedding modes exist by design:
 
 - `local`: deterministic hashed embeddings for offline-safe tests and local startup
-- `openai`: production-oriented embeddings using `LDT_EMBEDDING_MODEL`, currently defaulting to `text-embedding-3-small`
+- `openai`: production-oriented embeddings using `LDT_EMBEDDING_MODEL`, currently defaulting to `text-embedding-3-large`
 
 The local mode exists so:
 
@@ -235,9 +235,9 @@ The embedding payload is intentionally contextualized:
 For production use, the intended path is:
 
 - `LDT_EMBEDDING_PROVIDER=openai`
-- `LDT_EMBEDDING_MODEL=text-embedding-3-small` as the baseline default
+- `LDT_EMBEDDING_MODEL=text-embedding-3-large` as the baseline default
 
-This model choice is currently favored because it is a practical quality/cost choice for large-scale ingestion and retrieval. The deterministic embedder is a development fallback, not the intended production setting.
+This model choice is currently favored for stronger multilingual semantic quality (including Serbian-English retrieval). The deterministic embedder is a development fallback, not the intended production setting.
 
 ## 6. Evidence Bundle Model
 

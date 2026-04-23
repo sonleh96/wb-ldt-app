@@ -37,7 +37,7 @@ LDT_SERBIA_FETCH_TIMEOUT_SECONDS=30
 LDT_SERBIA_FETCH_MAX_RETRIES=2
 LDT_SERBIA_REFRESH_MODE=pending_only
 LDT_EMBEDDING_PROVIDER=openai
-LDT_EMBEDDING_MODEL=text-embedding-3-small
+LDT_EMBEDDING_MODEL=text-embedding-3-large
 LDT_EMBEDDING_DIMENSIONS=1536
 LDT_OPENAI_API_KEY=...
 LDT_OPENAI_MODEL=gpt-4.1-mini
@@ -131,7 +131,7 @@ gcloud run services update "$CLOUD_RUN_SERVICE" \
   --project="$GCP_PROJECT" \
   --region="$GCP_REGION" \
   --update-secrets="LDT_DATABASE_URL=ldt-database-url:latest,LDT_OPENAI_API_KEY=ldt-openai-api-key:latest" \
-  --update-env-vars="LDT_STORAGE_BACKEND=postgres,LDT_EMBEDDING_PROVIDER=openai,LDT_EMBEDDING_MODEL=text-embedding-3-small,LDT_EMBEDDING_DIMENSIONS=1536"
+  --update-env-vars="LDT_STORAGE_BACKEND=postgres,LDT_EMBEDDING_PROVIDER=openai,LDT_EMBEDDING_MODEL=text-embedding-3-large,LDT_EMBEDDING_DIMENSIONS=1536"
 ```
 
 6. Force a fresh revision to ensure latest secret versions are mounted:
@@ -176,6 +176,8 @@ The production Serbia path is explicitly staged:
 
 For the exact command log of the first successful live Postgres/OpenAI batch and DB/API verification, see
 `docs/deployment-backend-runbook-2026-04-20.md` under "First Real Postgres Serbia Batch + Verification (Live Service)".
+For the concise CLI command taxonomy used to complete Stage 2 mirroring and verification, see
+`docs/deployment-backend-runbook-2026-04-20.md` under "CLI Command Categories Used (Stage 2 Mirroring + Verification)".
 
 Commands:
 
@@ -183,6 +185,20 @@ Commands:
 python scripts/load_serbia_datasets.py --data-dir data
 python scripts/mirror_serbia_documents.py --batch-size 200 --refresh-mode pending_only
 python scripts/ingest_serbia_sources.py --batch-size 200 --refresh-mode pending_only
+```
+
+Cloud Run jobs should prefer module entrypoints (the container includes `src/` but not `scripts/`):
+
+```bash
+python -m src.jobs.load_serbia_datasets --data-dir data
+python -m src.jobs.mirror_serbia_documents --batch-size 200 --refresh-mode pending_only
+python -m src.jobs.ingest_serbia_sources --batch-size 200 --refresh-mode pending_only
+```
+
+Local pre-deploy validation:
+
+```bash
+python scripts/local_serbia_rag_smoke.py --data-dir data --output-dir .local/serbia-smoke
 ```
 
 ## GCS Naming Conventions

@@ -23,6 +23,12 @@ def test_gcs_uri_helpers_parse_bucket_object_and_filename() -> None:
     assert suffix_from_uri(uri) == ".pdf"
 
 
+def test_suffix_from_uri_infers_mirrored_trailing_extension_hint() -> None:
+    uri = "gs://ldt-documents/ldt/sources/municipal/bato-ina/general/unknown/bato-ina-local-development-plan__pdf"
+    assert filename_from_uri(uri) == "bato-ina-local-development-plan__pdf"
+    assert suffix_from_uri(uri) == ".pdf"
+
+
 def test_gcs_uri_parser_rejects_missing_object_name() -> None:
     with pytest.raises(ValueError):
         parse_gcs_uri("gs://ldt-documents")

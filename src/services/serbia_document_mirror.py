@@ -27,6 +27,10 @@ except ModuleNotFoundError:  # pragma: no cover - optional dependency path
     gcs_storage = None  # type: ignore[assignment]
 
 
+NATIONAL_DATASET_FAMILY: SerbiaDatasetFamily = "serbia_national_documents"
+NATIONAL_BATCH_RESERVE_RATIO = 0.25
+
+
 @dataclass
 class FetchedDocument:
     """Fetched remote document payload."""
@@ -141,17 +145,17 @@ class SerbiaDocumentMirrorService:
     ) -> SerbiaDocumentMirrorSummary:
         """Mirror pending rows and update dataset table lifecycle fields."""
 
-        pending_statuses: set[SerbiaDatasetMirrorStatus]
-        if refresh_mode == "force_refresh":
-            pending_statuses = {"not_started", "skipped", "mirrored", "failed"}
-        else:
-            pending_statuses = {"not_started", "failed"}
+        if batch_size <= 0:
+            return SerbiaDocumentMirrorSummary(scanned_rows=0)
 
-        rows = self._repository.list_rows(
-            ingestion_readinesses={"ready", "needs_resolver"},
-            mirror_statuses=pending_statuses,
-            limit=batch_size,
-        )
+        if refresh_mode == "pending_only":
+            rows = self._select_pending_rows(batch_size=batch_size)
+        else:
+            rows = self._repository.list_rows(
+                ingestion_readinesses={"ready", "needs_resolver"},
+                mirror_statuses={"not_started", "skipped", "mirrored", "failed"},
+                limit=batch_size,
+            )
 
         summary = SerbiaDocumentMirrorSummary(scanned_rows=len(rows))
         for row in rows:
@@ -164,6 +168,54 @@ class SerbiaDocumentMirrorService:
             else:
                 summary.skipped_rows += 1
         return summary
+
+    def _select_pending_rows(self, *, batch_size: int) -> list[SerbiaDatasetRow]:
+        """Select a fair pending batch without starving not-started national rows."""
+
+        not_started_rows = self._repository.list_rows(
+            ingestion_readinesses={"ready", "needs_resolver"},
+            mirror_statuses={"not_started"},
+            limit=None,
+        )
+        failed_rows = self._repository.list_rows(
+            ingestion_readinesses={"ready", "needs_resolver"},
+            mirror_statuses={"failed"},
+            limit=None,
+        )
+
+        selected: list[SerbiaDatasetRow] = []
+        selected_keys: set[tuple[SerbiaDatasetFamily, str]] = set()
+
+        national_not_started = [row for row in not_started_rows if row.dataset_family == NATIONAL_DATASET_FAMILY]
+        non_national_not_started = [row for row in not_started_rows if row.dataset_family != NATIONAL_DATASET_FAMILY]
+        national_reserve = _reserved_national_slots(batch_size=batch_size, available_national=len(national_not_started))
+
+        for row in national_not_started[:national_reserve]:
+            row_key = (row.dataset_family, row.id)
+            selected.append(row)
+            selected_keys.add(row_key)
+            if len(selected) >= batch_size:
+                return selected
+
+        for row in [*non_national_not_started, *national_not_started[national_reserve:]]:
+            row_key = (row.dataset_family, row.id)
+            if row_key in selected_keys:
+                continue
+            selected.append(row)
+            selected_keys.add(row_key)
+            if len(selected) >= batch_size:
+                return selected
+
+        for row in failed_rows:
+            row_key = (row.dataset_family, row.id)
+            if row_key in selected_keys:
+                continue
+            selected.append(row)
+            selected_keys.add(row_key)
+            if len(selected) >= batch_size:
+                return selected
+
+        return selected
 
     def mirror_row(
         self,
@@ -429,3 +481,12 @@ def _build_object_name(*, row: SerbiaDatasetRow, extension: str, gcs_prefix: str
     if gcs_prefix:
         return f"{gcs_prefix}/{suffix}"
     return suffix
+
+
+def _reserved_national_slots(*, batch_size: int, available_national: int) -> int:
+    """Return national rows reserved per batch to avoid starvation."""
+
+    if batch_size <= 0 or available_national <= 0:
+        return 0
+    reserve = max(1, int(batch_size * NATIONAL_BATCH_RESERVE_RATIO))
+    return min(reserve, available_national, batch_size)
