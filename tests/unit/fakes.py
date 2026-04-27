@@ -10,6 +10,8 @@ class FakeRecommendationGenerator:
         priority_signals: list[dict[str, object]],
         evidence_bundle: dict[str, object],
         context_pack: dict[str, object],
+        project_context: list[dict[str, object]] | None = None,
+        indicator_context: dict[str, object] | None = None,
         top_n_projects: int,
         language: str,
     ) -> RecommendationGenerationOutput:
@@ -50,6 +52,8 @@ class FailingRecommendationGenerator:
         priority_signals: list[dict[str, object]],
         evidence_bundle: dict[str, object],
         context_pack: dict[str, object],
+        project_context: list[dict[str, object]] | None = None,
+        indicator_context: dict[str, object] | None = None,
         top_n_projects: int,
         language: str,
     ) -> RecommendationGenerationOutput:

@@ -60,6 +60,8 @@ class RecommendationGenerator:
         priority_signals: list[dict[str, Any]],
         evidence_bundle: dict[str, Any],
         context_pack: dict[str, Any],
+        project_context: list[dict[str, Any]] | None = None,
+        indicator_context: dict[str, Any] | None = None,
         top_n_projects: int,
         language: str,
     ) -> RecommendationGenerationOutput:
@@ -74,6 +76,10 @@ class RecommendationGenerator:
             "top_n_projects": top_n_projects,
             "language": language,
         }
+        if project_context is not None:
+            prompt_input["project_context"] = project_context
+        if indicator_context is not None:
+            prompt_input["indicator_context"] = indicator_context
         messages = prompt.build_messages(prompt_input)
         raw_output = self._request_structured_output(messages)
         return self._normalize_output(

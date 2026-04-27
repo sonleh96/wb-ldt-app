@@ -1,5 +1,7 @@
 """Retrieval interfaces and scoring implementations."""
 
+from statistics import mean
+
 from src.retrieval.context_windows import RetrievalContextWindowExpander
 from src.schemas.retrieval import RetrievalResponse
 from src.retrieval.hybrid import HybridRetriever
@@ -67,6 +69,14 @@ class RetrievalService:
         if self._context_window_expander is not None:
             results, expansion_diagnostics = self._context_window_expander.expand(results)
             diagnostics = {**diagnostics, **expansion_diagnostics}
+
+        scores = [item.score for item in results]
+        diagnostics = {
+            **diagnostics,
+            "result_count": len(results),
+            "top_score": round(max(scores, default=0.0), 6),
+            "avg_score": round(mean(scores), 6) if scores else 0.0,
+        }
 
         return RetrievalResponse(
             mode=mode,

@@ -4,8 +4,8 @@ from src.analytics.gap_analysis import GapInput, compute_indicator_gaps
 from src.analytics.priority_signals import compute_priority_signals
 from src.core.errors import AppError
 from src.schemas.domain import MunicipalityProfile, PrioritySignal
-from src.storage.indicators import InMemoryIndicatorRepository
-from src.storage.municipalities import InMemoryMunicipalityRepository
+from src.storage.indicators import IndicatorRepository
+from src.storage.municipalities import MunicipalityRepository
 
 
 class MunicipalityProfileService:
@@ -13,8 +13,8 @@ class MunicipalityProfileService:
     def __init__(
         self,
         *,
-        municipality_repository: InMemoryMunicipalityRepository,
-        indicator_repository: InMemoryIndicatorRepository,
+        municipality_repository: MunicipalityRepository,
+        indicator_repository: IndicatorRepository,
     ) -> None:
         """Initialize the instance and its dependencies."""
         self._municipality_repository = municipality_repository

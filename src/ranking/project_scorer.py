@@ -82,14 +82,22 @@ class ProjectScorer:
                     best_evidence_support = evidence_support
 
             municipality_fit = 1.0 if project.municipality_id in {None, municipality_id} else 0.0
-            development_plan_alignment = self._bounded_float(
-                project.metadata.get("development_plan_alignment"), fallback=0.5
+            development_plan_alignment = self._development_alignment_score(
+                status=project.status,
+                metadata=project.metadata,
             )
-            readiness = self._status_adjusted_readiness(project.status, project.metadata.get("readiness"))
+            readiness = self._status_adjusted_readiness(
+                project.status,
+                project.metadata.get("readiness"),
+                agreement_signed=project.metadata.get("agreement_signed"),
+            )
             financing_plausibility = self._financing_score(
                 project.metadata.get("financing_plausibility"),
                 best_candidate.public_investment_type if best_candidate else None,
                 project.metadata.get("public_investment_types"),
+                total_investment=project.metadata.get("investment_amount_eur"),
+                grant_amount=project.metadata.get("grant_amount_eur"),
+                cofinancing_amount=project.metadata.get("cofinancing_amount_eur"),
             )
 
             total_score = 0.0 if filtered_project.is_excluded else round(
@@ -167,7 +175,25 @@ class ProjectScorer:
             return fallback
         return max(0.0, min(1.0, numeric))
 
-    def _status_adjusted_readiness(self, status: str, raw_readiness: object) -> float:
+    def _development_alignment_score(self, *, status: str, metadata: dict[str, object]) -> float:
+        """Return development-plan alignment from persisted project metadata."""
+
+        baseline = self._bounded_float(metadata.get("development_plan_alignment"), fallback=0.5)
+        if metadata.get("project_code"):
+            baseline += 0.05
+        if metadata.get("beneficiary_body"):
+            baseline += 0.03
+        if status.lower() in {"ready", "pipeline"}:
+            baseline += 0.04
+        return max(0.0, min(1.0, baseline))
+
+    def _status_adjusted_readiness(
+        self,
+        status: str,
+        raw_readiness: object,
+        *,
+        agreement_signed: object | None = None,
+    ) -> float:
         """Return readiness adjusted by project status."""
 
         base = self._bounded_float(raw_readiness, fallback=0.4)
@@ -177,18 +203,40 @@ class ProjectScorer:
             "ready": 1.0,
             "cancelled": 0.0,
         }.get(status.lower(), 0.75)
-        return max(0.0, min(1.0, base * status_multiplier))
+        signed_bonus = 0.08 if agreement_signed in {True, "true", "True", "1"} else 0.0
+        return max(0.0, min(1.0, (base * status_multiplier) + signed_bonus))
 
     def _financing_score(
         self,
         raw_financing: object,
         candidate_investment_type: str | None,
         supported_investment_types: object,
+        *,
+        total_investment: object | None = None,
+        grant_amount: object | None = None,
+        cofinancing_amount: object | None = None,
     ) -> float:
         """Return financing plausibility, penalizing incompatible investment types."""
 
         base = self._bounded_float(raw_financing, fallback=0.5)
+        total_value = self._numeric(total_investment, fallback=0.0)
+        grant_value = self._numeric(grant_amount, fallback=0.0)
+        cofinancing_value = self._numeric(cofinancing_amount, fallback=0.0)
+        if total_value > 0:
+            financing_share = max(0.0, min(1.0, (grant_value + cofinancing_value) / total_value))
+            base = max(base, 0.45 + (financing_share * 0.45))
+        elif grant_value > 0 or cofinancing_value > 0:
+            base = max(base, 0.68)
+
         allowed_types = {str(item) for item in (supported_investment_types or [])}
         if candidate_investment_type and allowed_types and candidate_investment_type not in allowed_types:
             return max(0.0, base - 0.35)
-        return base
+        return max(0.0, min(1.0, base))
+
+    def _numeric(self, value: object, *, fallback: float) -> float:
+        """Return a numeric value without applying score clamping."""
+
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return fallback

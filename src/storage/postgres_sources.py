@@ -258,7 +258,7 @@ class PostgresSourceRepository:
                 score=float(score),
             )
             for chunk_payload, source_payload, score in rows
-            if float(score) > 0
+            if score is not None and float(score) == float(score)
         ]
 
     def list_chunks_for_source(

@@ -33,15 +33,19 @@ from src.services.serbia_document_mirror import (
 from src.services.serbia_source_ingestion import SerbiaSourceIngestionService
 from src.services.source_admin_service import SourceAdminService
 from src.services.workflow_launcher import RecommendationWorkflowLauncher
-from src.storage.indicators import InMemoryIndicatorRepository
-from src.storage.municipalities import InMemoryMunicipalityRepository
+from src.storage.indicators import IndicatorRepository, InMemoryIndicatorRepository, PostgresIndicatorRepository
+from src.storage.municipalities import (
+    InMemoryMunicipalityRepository,
+    MunicipalityRepository,
+    PostgresMunicipalityRepository,
+)
 from src.storage.project_reviews import (
     InMemoryProjectReviewStore,
     PostgresProjectReviewStore,
     ProjectReviewStore,
 )
 from src.storage.postgres_sources import PostgresSourceRepository
-from src.storage.projects import InMemoryProjectRepository
+from src.storage.projects import InMemoryProjectRepository, PostgresProjectRepository, ProjectRepository
 from src.storage.documents import DocumentStore, build_document_store
 from src.storage.run_store import InMemoryRunStore, PostgresRunStore, RunStore
 from src.storage.run_traces import InMemoryRunTraceStore, PostgresRunTraceStore, RunTraceStore
@@ -68,6 +72,9 @@ class ServiceContainer:
         project_review_generator: ProjectReviewGenerator | None = None,
         embedding_client: EmbeddingClient | None = None,
         document_store: DocumentStore | None = None,
+        municipality_repository: MunicipalityRepository | None = None,
+        indicator_repository: IndicatorRepository | None = None,
+        project_repository: ProjectRepository | None = None,
         source_repository: SourceRepository | None = None,
         serbia_dataset_repository: SerbiaDatasetRepository | None = None,
         serbia_document_mirror_service: SerbiaDocumentMirrorService | None = None,
@@ -77,9 +84,32 @@ class ServiceContainer:
     ) -> None:
         """Initialize the instance and its dependencies."""
         self.settings = settings or get_settings()
-        self.municipality_repository = InMemoryMunicipalityRepository()
-        self.indicator_repository = InMemoryIndicatorRepository()
-        self.project_repository = InMemoryProjectRepository()
+        if municipality_repository is not None:
+            self.municipality_repository = municipality_repository
+        elif self.settings.storage_backend.lower() == "postgres":
+            self.municipality_repository = PostgresMunicipalityRepository(
+                database_url=self._require_database_url(),
+            )
+        else:
+            self.municipality_repository = InMemoryMunicipalityRepository()
+
+        if indicator_repository is not None:
+            self.indicator_repository = indicator_repository
+        elif self.settings.storage_backend.lower() == "postgres":
+            self.indicator_repository = PostgresIndicatorRepository(
+                database_url=self._require_database_url(),
+            )
+        else:
+            self.indicator_repository = InMemoryIndicatorRepository()
+
+        if project_repository is not None:
+            self.project_repository = project_repository
+        elif self.settings.storage_backend.lower() == "postgres":
+            self.project_repository = PostgresProjectRepository(
+                database_url=self._require_database_url(),
+            )
+        else:
+            self.project_repository = InMemoryProjectRepository()
 
         self.municipality_profile_service = MunicipalityProfileService(
             municipality_repository=self.municipality_repository,
@@ -99,10 +129,8 @@ class ServiceContainer:
         if source_repository is not None:
             self.source_repository = source_repository
         elif self.settings.storage_backend.lower() == "postgres":
-            if not self.settings.database_url:
-                raise ValueError("LDT_DATABASE_URL is required when storage_backend=postgres")
             self.source_repository = PostgresSourceRepository(
-                database_url=self.settings.database_url,
+                database_url=self._require_database_url(),
                 embedding_dimensions=self.settings.embedding_dimensions,
             )
         else:
@@ -124,10 +152,8 @@ class ServiceContainer:
         if serbia_dataset_repository is not None:
             self.serbia_dataset_repository = serbia_dataset_repository
         elif self.settings.storage_backend.lower() == "postgres":
-            if not self.settings.database_url:
-                raise ValueError("LDT_DATABASE_URL is required when storage_backend=postgres")
             self.serbia_dataset_repository = PostgresSerbiaDatasetRepository(
-                database_url=self.settings.database_url,
+                database_url=self._require_database_url(),
             )
         else:
             self.serbia_dataset_repository = InMemorySerbiaDatasetRepository()
@@ -233,28 +259,29 @@ class ServiceContainer:
         """Return the configured run store implementation."""
 
         if self.settings.storage_backend.lower() == "postgres":
-            if not self.settings.database_url:
-                raise ValueError("LDT_DATABASE_URL is required when storage_backend=postgres")
-            return PostgresRunStore(database_url=self.settings.database_url)
+            return PostgresRunStore(database_url=self._require_database_url())
         return InMemoryRunStore()
 
     def _build_project_review_store(self) -> ProjectReviewStore:
         """Return the configured project-review store implementation."""
 
         if self.settings.storage_backend.lower() == "postgres":
-            if not self.settings.database_url:
-                raise ValueError("LDT_DATABASE_URL is required when storage_backend=postgres")
-            return PostgresProjectReviewStore(database_url=self.settings.database_url)
+            return PostgresProjectReviewStore(database_url=self._require_database_url())
         return InMemoryProjectReviewStore()
 
     def _build_run_trace_store(self) -> RunTraceStore:
         """Return the configured run-trace store implementation."""
 
         if self.settings.storage_backend.lower() == "postgres":
-            if not self.settings.database_url:
-                raise ValueError("LDT_DATABASE_URL is required when storage_backend=postgres")
-            return PostgresRunTraceStore(database_url=self.settings.database_url)
+            return PostgresRunTraceStore(database_url=self._require_database_url())
         return InMemoryRunTraceStore()
+
+    def _require_database_url(self) -> str:
+        """Return database URL or raise when postgres mode is misconfigured."""
+
+        if not self.settings.database_url:
+            raise ValueError("LDT_DATABASE_URL is required when storage_backend=postgres")
+        return self.settings.database_url
 
     def _seed_sources(self) -> None:
         """Internal helper to seed sources."""

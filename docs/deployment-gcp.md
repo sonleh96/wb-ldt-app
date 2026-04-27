@@ -37,7 +37,7 @@ LDT_SERBIA_FETCH_TIMEOUT_SECONDS=30
 LDT_SERBIA_FETCH_MAX_RETRIES=2
 LDT_SERBIA_REFRESH_MODE=pending_only
 LDT_EMBEDDING_PROVIDER=openai
-LDT_EMBEDDING_MODEL=text-embedding-3-large
+LDT_EMBEDDING_MODEL=text-embedding-3-small
 LDT_EMBEDDING_DIMENSIONS=1536
 LDT_OPENAI_API_KEY=...
 LDT_OPENAI_MODEL=gpt-4.1-mini
@@ -131,7 +131,7 @@ gcloud run services update "$CLOUD_RUN_SERVICE" \
   --project="$GCP_PROJECT" \
   --region="$GCP_REGION" \
   --update-secrets="LDT_DATABASE_URL=ldt-database-url:latest,LDT_OPENAI_API_KEY=ldt-openai-api-key:latest" \
-  --update-env-vars="LDT_STORAGE_BACKEND=postgres,LDT_EMBEDDING_PROVIDER=openai,LDT_EMBEDDING_MODEL=text-embedding-3-large,LDT_EMBEDDING_DIMENSIONS=1536"
+  --update-env-vars="LDT_STORAGE_BACKEND=postgres,LDT_EMBEDDING_PROVIDER=openai,LDT_EMBEDDING_MODEL=text-embedding-3-small,LDT_EMBEDDING_DIMENSIONS=1536"
 ```
 
 6. Force a fresh revision to ensure latest secret versions are mounted:

@@ -11,7 +11,7 @@ from src.schemas.run_state import RunState
 from src.retrieval.service import RetrievalService
 from src.services.run_registry import RunRegistry
 from src.storage.project_reviews import ProjectReviewRecord, ProjectReviewStore, utcnow
-from src.storage.projects import InMemoryProjectRepository
+from src.storage.projects import ProjectRepository
 
 
 class ProjectReviewService:
@@ -21,7 +21,7 @@ class ProjectReviewService:
         self,
         *,
         run_registry: RunRegistry,
-        project_repository: InMemoryProjectRepository,
+        project_repository: ProjectRepository,
         retrieval_service: RetrievalService,
         project_review_store: ProjectReviewStore,
         project_review_generator: ProjectReviewGenerator,

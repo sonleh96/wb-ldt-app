@@ -207,8 +207,24 @@ gcloud alpha run jobs update wb-ldt-serbia-stage2-mirror \
   --update-env-vars=LDT_EMBEDDING_MODEL=text-embedding-3-large,LDT_EMBEDDING_DIMENSIONS=1536
 ```
 
+6. Runtime cost optimization + longer Stage 3 timeout (applied 2026-04-24):
+
+```bash
+gcloud run services update wb-ldt-app-backend \
+  --region=asia-southeast1 \
+  --project=wb-ldt \
+  --update-env-vars=LDT_EMBEDDING_MODEL=text-embedding-3-small,LDT_EMBEDDING_DIMENSIONS=1536
+
+gcloud alpha run jobs update wb-ldt-serbia-stage3-ingest \
+  --region=asia-southeast1 \
+  --project=wb-ldt \
+  --task-timeout=28800s \
+  --update-env-vars=LDT_EMBEDDING_MODEL=text-embedding-3-small,LDT_EMBEDDING_DIMENSIONS=1536
+```
+
 Current note:
 - `LDT_DATABASE_URL` and `LDT_OPENAI_API_KEY` are currently bound to placeholder secret values and must be replaced with real values before switching to `LDT_STORAGE_BACKEND=postgres` and OpenAI embeddings.
+- Latest live settings (2026-04-24): `LDT_EMBEDDING_MODEL=text-embedding-3-small`, `LDT_EMBEDDING_DIMENSIONS=1536`, and Stage 3 Cloud Run Job `timeoutSeconds=28800`.
 
 ## Replacing Supabase and OpenAI Placeholders (No Secret Sharing)
 

@@ -1,8 +1,10 @@
 """Workflow node implementations for recommendation execution."""
 
 from dataclasses import dataclass, field
+from statistics import mean
 from typing import Any
 
+from src.analytics.priority_signals import compute_priority_signals
 from src.llm.explanation_generator import ExplanationGenerator
 from src.llm.recommendation_generator import RecommendationGenerator
 from src.ranking.project_filters import ProjectFilter
@@ -22,10 +24,14 @@ from src.services.context_packer import ContextPacker
 from src.services.evidence_bundle import EvidenceBundleService
 from src.services.municipality_profile_service import MunicipalityProfileService
 from src.services.query_planner import QueryPlanner
-from src.storage.projects import InMemoryProjectRepository
 from src.retrieval.service import RetrievalService
+from src.storage.projects import ProjectRecord, ProjectRepository
 from src.validation.run_validator import RunValidator
 from src.validation.strict_gate import StrictEvaluationGate
+
+
+MIN_RETRIEVAL_RESULTS = 3
+MIN_RETRIEVAL_TOP_SCORE = 0.02
 
 
 @dataclass
@@ -59,7 +65,7 @@ class RecommendationNodes:
         municipality_profile_service: MunicipalityProfileService,
         retrieval_service: RetrievalService,
         evidence_bundle_service: EvidenceBundleService,
-        project_repository: InMemoryProjectRepository,
+        project_repository: ProjectRepository,
         query_planner: QueryPlanner,
         context_packer: ContextPacker,
         strict_evaluation_gate: StrictEvaluationGate,
@@ -100,14 +106,32 @@ class RecommendationNodes:
         municipality_id = str(ctx.request["municipality_id"])
         category = str(ctx.request["category"])
         year = int(ctx.request["year"])
-        signals = self._municipality_profile_service.compute_priority_signals(
+        profile = self._municipality_profile_service.build_profile(
             municipality_id=municipality_id,
             category=category,
             year=year,
+        )
+        signals = compute_priority_signals(
+            profile.indicator_gaps,
             top_n=max(3, int(ctx.request.get("top_n_projects", 3))),
         )
         ctx.node_outputs["priority_signals"] = [signal.model_dump(mode="json") for signal in signals]
-        return {"signal_count": len(signals)}
+        indicator_observations = [
+            {
+                "indicator_id": gap.indicator_id,
+                "indicator_name": gap.indicator_name,
+                "municipality_value": gap.municipality_value,
+                "national_value": gap.national_value,
+                "gap_value": gap.gap_value,
+                "higher_is_better": gap.higher_is_better,
+            }
+            for gap in profile.indicator_gaps
+        ]
+        ctx.node_outputs["indicator_observations"] = indicator_observations
+        return {
+            "signal_count": len(signals),
+            "indicator_observation_count": len(indicator_observations),
+        }
 
     def plan_retrieval(self, ctx: WorkflowContext) -> dict[str, Any]:
         """Handle plan retrieval."""
@@ -133,19 +157,89 @@ class RecommendationNodes:
         if ctx.retrieval_plan is None:
             raise ValueError("retrieval plan not available")
 
-        response = self._retrieval_service.search(
+        primary_response = self._retrieval_service.search(
             query=ctx.retrieval_plan.query,
             mode=ctx.retrieval_plan.retrieval_mode,
             top_k=ctx.retrieval_plan.top_k,
             municipality_id=ctx.retrieval_plan.municipality_id,
             category=ctx.retrieval_plan.category,
         )
-        ctx.retrieval_response = response
-        ctx.retrieval_diagnostics = response.diagnostics
+        attempts: list[dict[str, object]] = [
+            self._attempt_diagnostics(
+                label="primary",
+                mode=primary_response.mode,
+                municipality_id=ctx.retrieval_plan.municipality_id,
+                response=primary_response,
+            )
+        ]
+        chosen_response = primary_response
+
+        if self._is_weak_coverage(primary_response):
+            fallback_response = self._retrieval_service.search(
+                query=ctx.retrieval_plan.query,
+                mode=ctx.retrieval_plan.retrieval_mode,
+                top_k=ctx.retrieval_plan.top_k,
+                municipality_id=None,
+                category=ctx.retrieval_plan.category,
+            )
+            attempts.append(
+                self._attempt_diagnostics(
+                    label="fallback_broadened_municipality",
+                    mode=fallback_response.mode,
+                    municipality_id=None,
+                    response=fallback_response,
+                )
+            )
+            if self._attempt_quality(fallback_response) > self._attempt_quality(chosen_response):
+                chosen_response = fallback_response
+
+            if self._is_weak_coverage(chosen_response):
+                semantic_response = self._retrieval_service.search(
+                    query=ctx.retrieval_plan.query,
+                    mode="semantic",
+                    top_k=ctx.retrieval_plan.top_k,
+                    municipality_id=ctx.retrieval_plan.municipality_id,
+                    category=ctx.retrieval_plan.category,
+                )
+                attempts.append(
+                    self._attempt_diagnostics(
+                        label="fallback_semantic",
+                        mode=semantic_response.mode,
+                        municipality_id=ctx.retrieval_plan.municipality_id,
+                        response=semantic_response,
+                    )
+                )
+                if self._attempt_quality(semantic_response) > self._attempt_quality(chosen_response):
+                    chosen_response = semantic_response
+
+        for attempt in attempts:
+            attempt["selected"] = bool(
+                attempt["mode"] == chosen_response.mode
+                and attempt["result_count"] == chosen_response.total_results
+            )
+
+        coverage = self._coverage_summary(chosen_response)
+        ctx.retrieval_response = chosen_response
+        ctx.retrieval_diagnostics = {
+            **chosen_response.diagnostics,
+            "coverage": coverage,
+            "fallback_attempts": attempts,
+            "selected_attempt_label": next(
+                (str(item["label"]) for item in attempts if bool(item.get("selected"))),
+                "primary",
+            ),
+            "query_planning_handoff": {
+                "plan_mode": ctx.retrieval_plan.retrieval_mode,
+                "executed_mode": chosen_response.mode,
+                "top_k": ctx.retrieval_plan.top_k,
+                "query_terms": ctx.retrieval_plan.query_terms,
+                "filters": ctx.retrieval_plan.filters,
+            },
+        }
         return {
-            "retrieval_mode": response.mode,
-            "result_count": response.total_results,
-            "diagnostics": response.diagnostics,
+            "retrieval_mode": chosen_response.mode,
+            "result_count": chosen_response.total_results,
+            "diagnostics": ctx.retrieval_diagnostics,
         }
 
     def optionally_retrieve_web_evidence(self, ctx: WorkflowContext) -> dict[str, Any]:
@@ -211,11 +305,23 @@ class RecommendationNodes:
         if ctx.context_pack is None:
             raise ValueError("context pack must exist before candidate generation")
 
+        category = str(ctx.request["category"])
+        municipality_id = str(ctx.request["municipality_id"])
+        project_context = self._build_project_context(
+            projects=self._project_repository.list_by_category(category),
+            municipality_id=municipality_id,
+        )
+        indicator_context = {
+            "priority_signals": list(ctx.node_outputs.get("priority_signals", [])),
+            "indicator_observations": list(ctx.node_outputs.get("indicator_observations", [])),
+        }
         generation_output = self._recommendation_generator.generate(
             request=dict(ctx.request),
             priority_signals=list(ctx.node_outputs.get("priority_signals", [])),
             evidence_bundle=ctx.evidence_bundle.model_dump(mode="json"),
             context_pack=ctx.context_pack.model_dump(mode="json"),
+            project_context=project_context,
+            indicator_context=indicator_context,
             top_n_projects=int(ctx.request.get("top_n_projects", 3)),
             language=str(ctx.request.get("language", "en")),
         )
@@ -226,6 +332,8 @@ class RecommendationNodes:
             "candidates": [candidate.model_dump(mode="json") for candidate in generation_output.candidates],
             "model_name": generation_output.model_name,
             "prompt_version": generation_output.prompt_version,
+            "project_context_count": len(project_context),
+            "indicator_context_count": len(indicator_context.get("indicator_observations", [])),
         }
 
     def rank_candidates(self, ctx: WorkflowContext) -> dict[str, Any]:
@@ -295,6 +403,96 @@ class RecommendationNodes:
             "excluded_count": len(ctx.excluded_projects),
             "top_score": top_score,
         }
+
+    def _coverage_summary(self, response: RetrievalResponse) -> dict[str, object]:
+        """Return normalized retrieval-coverage diagnostics."""
+
+        scores = [item.score for item in response.results]
+        top_score = max(scores, default=0.0)
+        avg_score = mean(scores) if scores else 0.0
+        return {
+            "is_weak": self._is_weak_coverage(response),
+            "result_count": response.total_results,
+            "top_score": round(top_score, 6),
+            "avg_score": round(avg_score, 6),
+            "min_results_threshold": MIN_RETRIEVAL_RESULTS,
+            "min_top_score_threshold": MIN_RETRIEVAL_TOP_SCORE,
+        }
+
+    def _is_weak_coverage(self, response: RetrievalResponse) -> bool:
+        """Return whether retrieval coverage is weak for downstream generation."""
+
+        scores = [item.score for item in response.results]
+        top_score = max(scores, default=0.0)
+        if response.total_results < MIN_RETRIEVAL_RESULTS:
+            return True
+        if top_score < MIN_RETRIEVAL_TOP_SCORE:
+            return True
+        return False
+
+    def _attempt_quality(self, response: RetrievalResponse) -> float:
+        """Return a deterministic quality score for retrieval-attempt comparisons."""
+
+        top_score = max((item.score for item in response.results), default=0.0)
+        return (response.total_results * 100.0) + top_score
+
+    def _attempt_diagnostics(
+        self,
+        *,
+        label: str,
+        mode: str,
+        municipality_id: str | None,
+        response: RetrievalResponse,
+    ) -> dict[str, object]:
+        """Build diagnostics for one retrieval attempt."""
+
+        return {
+            "label": label,
+            "mode": mode,
+            "municipality_id": municipality_id,
+            "result_count": response.total_results,
+            "top_score": round(max((item.score for item in response.results), default=0.0), 6),
+        }
+
+    def _build_project_context(
+        self,
+        *,
+        projects: list[ProjectRecord],
+        municipality_id: str,
+        limit: int = 25,
+    ) -> list[dict[str, object]]:
+        """Build compact project context for candidate generation."""
+
+        prioritized = sorted(
+            projects,
+            key=lambda item: (
+                item.municipality_id not in {None, municipality_id},
+                item.status.lower() == "cancelled",
+                item.title.lower(),
+            ),
+        )
+        context_rows: list[dict[str, object]] = []
+        for project in prioritized[:limit]:
+            context_rows.append(
+                {
+                    "project_id": project.project_id,
+                    "title": project.title,
+                    "municipality_id": project.municipality_id,
+                    "status": project.status,
+                    "category": project.category,
+                    "metadata": {
+                        "sector": str(project.metadata.get("sector") or ""),
+                        "project_code": str(project.metadata.get("project_code") or ""),
+                        "beneficiary_body": str(project.metadata.get("beneficiary_body") or ""),
+                        "development_plan_alignment": project.metadata.get("development_plan_alignment"),
+                        "readiness": project.metadata.get("readiness"),
+                        "financing_plausibility": project.metadata.get("financing_plausibility"),
+                        "public_investment_types": project.metadata.get("public_investment_types", []),
+                        "indicator_keywords": project.metadata.get("indicator_keywords", []),
+                    },
+                }
+            )
+        return context_rows
 
     def select_projects(self, ctx: WorkflowContext) -> dict[str, Any]:
         """Select projects."""
